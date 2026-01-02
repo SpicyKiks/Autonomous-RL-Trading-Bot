@@ -11,6 +11,9 @@ python -m pip install -U pip
 pip install -r requirements.txt
 pytest
 python -c "import autonomous_rl_trading_bot; print(autonomous_rl_trading_bot.__version__)"
+```
 
-
-
+## Dev commands
+- Format: `python -m black .`
+- Lint: `python -m ruff check .`
+- Test: `pytest`

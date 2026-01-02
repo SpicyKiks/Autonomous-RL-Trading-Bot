@@ -26,9 +26,7 @@ artifacts/runs/*
 artifacts/models/*
 artifacts/reports/*
 artifacts/logs/*
+artifacts/db/*
 
 # Keep the placeholder READMEs inside artifacts folders
 !artifacts/**/README.md
-
-
-
