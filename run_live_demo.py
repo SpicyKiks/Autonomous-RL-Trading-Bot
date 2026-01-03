@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from autonomous_rl_trading_bot.common.config import load_config
 from autonomous_rl_trading_bot.common.paths import ensure_artifact_tree
@@ -23,7 +24,9 @@ def main() -> int:
     args = parser.parse_args()
 
     ensure_artifact_tree()
-    loaded = load_config(mode=args.mode, base_name=args.config)
+
+    base_name = Path(args.config).name
+    loaded = load_config(mode=args.mode, base_name=base_name)
     cfg = loaded.config
 
     print(f"autonomous-rl-trading-bot v{__version__}")
@@ -40,4 +43,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
