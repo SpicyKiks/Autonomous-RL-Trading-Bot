@@ -13,7 +13,7 @@ logging:
   file: true
 
 mode:
-  id: "spot"
+  id: "spot"   # "spot" or "futures"
 
 db:
   path: ""
@@ -21,7 +21,6 @@ db:
 
 exchange:
   name: "binance"
-  # Step 3 uses public endpoints; demo=true points to testnet bases.
   demo: true
   spot:
     base_url_demo: "https://testnet.binance.vision"
@@ -36,12 +35,49 @@ exchange:
 
 data:
   candles:
-    # default lookback for run_fetch_data.py if not provided
     lookback_minutes: 180
+  dataset:
+    symbol: "BTCUSDT"
+    interval: "1m"
+    window_minutes: 120
+    strict_gaps: true
+    features:
+      - "return"
+      - "log_return"
 
-# Placeholder sections for future steps
 features: {}
 env: {}
 training: {}
-evaluation: {}
+
+# Step 5/6: deterministic offline backtesting (spot + futures)
+evaluation:
+  backtest:
+    # strategy can be: buy_and_hold | sma_crossover | ema_crossover | rsi_reversion
+    strategy: "buy_and_hold"
+
+    # Shared execution params
+    initial_cash: 1000.0
+    order_size_quote: 0.0        # 0 => all-in for open/increase; close-all for CLOSE
+    taker_fee_rate: 0.001
+    slippage_bps: 5
+
+    # Futures-only knobs (ignored for spot):
+    leverage: 3.0
+    maintenance_margin_rate: 0.005
+    allow_short: true
+    stop_on_liquidation: true
+
+    # Step 6: Baseline strategy parameter defaults
+    strategies:
+      sma_crossover:
+        fast: 10
+        slow: 30
+      ema_crossover:
+        fast: 12
+        slow: 26
+      rsi_reversion:
+        period: 14
+        low: 30.0
+        high: 70.0
+
 live: {}
