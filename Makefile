@@ -1,4 +1,7 @@
-.PHONY: venv install fmt lint test
+.PHONY: bootstrap venv install fmt lint test
+
+bootstrap:
+	python scripts/bootstrap_env.py
 
 venv:
 	python -m venv .venv
@@ -15,6 +18,3 @@ lint:
 
 test:
 	pytest
-
-
-
