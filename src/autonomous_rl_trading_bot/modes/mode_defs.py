@@ -75,7 +75,27 @@ def _spot_broker(runtime: ModeRuntimeConfig, cfg: Mapping[str, Any]):
 
 
 def _futures_broker(runtime: ModeRuntimeConfig, cfg: Mapping[str, Any]):
-    raise NotImplementedError("Futures broker adapter not implemented yet. This will be added in Step 3/8.")
+    from autonomous_rl_trading_bot.broker.paper import PaperFuturesBroker, PaperFuturesConfig
+
+    bt = (cfg.get("evaluation", {}) or {}).get("backtest", {}) or {}
+    initial_cash = float(bt.get("initial_cash", 1000.0))
+    leverage = float(bt.get("leverage", 3.0))
+    maintenance_margin_rate = float(bt.get("maintenance_margin_rate", 0.005))
+    allow_short = bool(bt.get("allow_short", True))
+    taker_fee_rate = float(bt.get("taker_fee_rate", 0.001))
+    slippage_bps = float(bt.get("slippage_bps", 5.0))
+
+    return PaperFuturesBroker(
+        symbol=runtime.default_symbol,
+        cfg=PaperFuturesConfig(
+            initial_cash=initial_cash,
+            leverage=leverage,
+            maintenance_margin_rate=maintenance_margin_rate,
+            allow_short=allow_short,
+            taker_fee_rate=taker_fee_rate,
+            slippage_bps=slippage_bps,
+        ),
+    )
 
 
 def _spot_risk(runtime: ModeRuntimeConfig, cfg: Mapping[str, Any]):
@@ -99,7 +119,27 @@ def _spot_risk(runtime: ModeRuntimeConfig, cfg: Mapping[str, Any]):
 
 
 def _futures_risk(runtime: ModeRuntimeConfig, cfg: Mapping[str, Any]):
-    raise NotImplementedError("Futures risk manager not implemented yet. This will be added in Step 4.")
+    from autonomous_rl_trading_bot.risk import FuturesRiskConfig, FuturesRiskManager
+
+    live = (cfg.get("live", {}) or {})
+    r = (live.get("risk", {}) or {}).get("futures", {}) or {}
+    allow_short = bool(r.get("allow_short", True))
+    max_drawdown = float(r.get("max_drawdown", 0.3))
+    min_equity = float(r.get("min_equity", 1e-9))
+    max_leverage_used = float(r.get("max_leverage_used", 20.0))
+    max_order_quote = float(r.get("max_order_quote", 0.0))
+    max_position_notional_quote = float(r.get("max_position_notional_quote", 0.0))
+
+    return FuturesRiskManager(
+        FuturesRiskConfig(
+            allow_short=allow_short,
+            max_drawdown=max_drawdown,
+            min_equity=min_equity,
+            max_leverage_used=max_leverage_used,
+            max_order_quote=max_order_quote,
+            max_position_notional_quote=max_position_notional_quote,
+        )
+    )
 
 
 def _spot_env(runtime: ModeRuntimeConfig, cfg: Mapping[str, Any]):
@@ -151,7 +191,59 @@ def _spot_env(runtime: ModeRuntimeConfig, cfg: Mapping[str, Any]):
 
 
 def _futures_env(runtime: ModeRuntimeConfig, cfg: Mapping[str, Any]):
-    raise NotImplementedError("FuturesEnv not implemented yet. This will be added in Step 4.")
+    from autonomous_rl_trading_bot.common.paths import artifacts_dir
+    from autonomous_rl_trading_bot.envs import FuturesEnv, FuturesEnvConfig
+    from autonomous_rl_trading_bot.rl.dataset import load_dataset_npz, select_latest_dataset
+
+    artifacts_base = artifacts_dir()
+    datasets_dir = artifacts_base / "datasets"
+
+    env_cfg = (cfg.get("env", {}) or {}).get("futures", {}) or {}
+    lookback = int(env_cfg.get("lookback", 64))
+    reward_type = str(env_cfg.get("reward_type", "log_return"))
+
+    bt = (cfg.get("evaluation", {}) or {}).get("backtest", {}) or {}
+    initial_cash = float(bt.get("initial_cash", 1000.0))
+    leverage = float(bt.get("leverage", 3.0))
+    maintenance_margin_rate = float(bt.get("maintenance_margin_rate", 0.005))
+    allow_short = bool(bt.get("allow_short", True))
+    stop_on_liquidation = bool(bt.get("stop_on_liquidation", True))
+    order_size_quote = float(bt.get("order_size_quote", 0.0))
+    taker_fee_rate = float(bt.get("taker_fee_rate", 0.001))
+    slippage_bps = float(bt.get("slippage_bps", 5.0))
+
+    max_drawdown = float(env_cfg.get("max_drawdown", 0.999))
+    min_equity = float(env_cfg.get("min_equity", 1e-9))
+
+    dataset_id = env_cfg.get("dataset_id", None)
+    if isinstance(dataset_id, str) and dataset_id.strip():
+        ds_dir = datasets_dir / dataset_id.strip()
+        ds = load_dataset_npz(ds_dir)
+    else:
+        ds = select_latest_dataset(datasets_dir, "futures")
+
+    feature_keys = None
+    data_cfg = (cfg.get("data", {}) or {}).get("dataset", {}) or {}
+    feats = data_cfg.get("features", None)
+    if isinstance(feats, list) and feats:
+        feature_keys = [str(x) for x in feats]
+
+    fcfg = FuturesEnvConfig(
+        lookback=lookback,
+        initial_cash=initial_cash,
+        leverage=leverage,
+        maintenance_margin_rate=maintenance_margin_rate,
+        allow_short=allow_short,
+        stop_on_liquidation=stop_on_liquidation,
+        order_size_quote=order_size_quote,
+        taker_fee_rate=taker_fee_rate,
+        slippage_bps=slippage_bps,
+        max_drawdown=max_drawdown,
+        min_equity=min_equity,
+        reward_type=reward_type,
+    )
+
+    return FuturesEnv.from_dataset_dir(ds.dataset_dir, cfg=fcfg, seed=runtime.seed, feature_keys=feature_keys)
 
 
 def builtin_modes() -> list[ModeDefinition]:
