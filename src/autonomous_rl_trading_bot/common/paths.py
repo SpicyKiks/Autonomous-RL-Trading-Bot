@@ -31,7 +31,7 @@ def ensure_dir(p: Path) -> Path:
 
 def ensure_artifact_tree() -> None:
     """
-    Ensure artifact subfolders exist (datasets/runs/models/reports/logs/db).
+    Ensure artifact subfolders exist (datasets/runs/models/reports/logs/db/backtests).
     """
     base = artifacts_dir()
     ensure_dir(base / "datasets")
@@ -40,3 +40,4 @@ def ensure_artifact_tree() -> None:
     ensure_dir(base / "reports")
     ensure_dir(base / "logs")
     ensure_dir(base / "db")
+    ensure_dir(base / "backtests")
