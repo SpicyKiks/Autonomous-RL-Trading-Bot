@@ -1,30 +1,22 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Optional
+
 from dash import Dash
 
-from autonomous_rl_trading_bot.common.paths import ensure_artifact_tree
-from autonomous_rl_trading_bot.version import __version__
-
 from .callbacks import register_callbacks
-from .data_api import load_artifact_index
-from .layout import build_layout
+from .data_api import DashboardDataAPI
+from .layout import make_layout
 
 
-def create_dash_app() -> Dash:
-    """Create a minimal Dash app (offline).
+def create_app(*, db_path: Path, title: str = "ARBT Dashboard") -> Dash:
+    db_path = Path(db_path)
 
-    This is deliberately safe: it never calls exchanges or networks.
-    It only reads local artifacts/ (datasets/runs).
-    """
-    ensure_artifact_tree()
-    idx = load_artifact_index()
+    app = Dash(__name__, title=title)
+    api = DashboardDataAPI(db_path=db_path)
 
-    app = Dash(
-        __name__,
-        title=f"Autonomous RL Trading Bot v{__version__}",
-        suppress_callback_exceptions=True,
-    )
-    app.layout = build_layout(idx)
-    register_callbacks(app)
+    app.layout = make_layout(str(db_path))
+    register_callbacks(app, api)
+
     return app
-

@@ -2,72 +2,96 @@ from __future__ import annotations
 
 from dash import dcc, html
 
-from .components import empty_state, header
-from .data_api import ArtifactIndex
+from .components import card
 
 
-def build_layout(idx: ArtifactIndex) -> html.Div:
-    runs = idx.runs or []
-    datasets = idx.datasets or []
-
+def make_layout(db_path_str: str) -> html.Div:
     return html.Div(
         [
-            header(
-                "Autonomous RL Trading Bot",
-                "Dashboard (offline) — reads artifacts/ only",
-            ),
+            html.H2("Autonomous RL Trading Bot — Dashboard"),
             html.Div(
                 [
-                    html.Div(
-                        [
-                            html.Label("Dataset"),
-                            dcc.Dropdown(
-                                id="dataset_id",
-                                options=[{"label": d, "value": d} for d in datasets],
-                                value=(datasets[0] if datasets else None),
-                                placeholder="No datasets yet",
-                                clearable=True,
-                            ),
-                        ],
-                        style={"flex": 1, "minWidth": "280px"},
-                    ),
-                    html.Div(
-                        [
-                            html.Label("Run"),
-                            dcc.Dropdown(
-                                id="run_id",
-                                options=[{"label": r, "value": r} for r in runs],
-                                value=(runs[0] if runs else None),
-                                placeholder="No runs yet",
-                                clearable=True,
-                            ),
-                        ],
-                        style={"flex": 1, "minWidth": "280px"},
-                    ),
-                    html.Div(
-                        [
-                            html.Label("Status"),
-                            html.Div(id="status", style={"paddingTop": "8px"}),
-                        ],
-                        style={"flex": 1, "minWidth": "280px"},
-                    ),
+                    html.Div("DB:", style={"fontWeight": "bold", "marginRight": "8px"}),
+                    html.Code(db_path_str),
                 ],
-                style={
-                    "display": "flex",
-                    "gap": "16px",
-                    "padding": "16px",
-                    "flexWrap": "wrap",
-                },
+                style={"marginBottom": "10px"},
             ),
-            html.Div(
-                [
-                    empty_state(
-                        "This is the step-0 dashboard shell. Later steps will add charts, trades, and live monitoring."
-                    )
+
+            dcc.Interval(id="tick", interval=4000, n_intervals=0),
+
+            dcc.Tabs(
+                id="tabs",
+                value="tab-backtests",
+                children=[
+                    dcc.Tab(
+                        label="Backtests",
+                        value="tab-backtests",
+                        children=[
+                            html.Div(
+                                [
+                                    html.Div(
+                                        [
+                                            html.Label("Market type"),
+                                            dcc.Dropdown(
+                                                id="bt-market-filter",
+                                                options=[
+                                                    {"label": "All", "value": ""},
+                                                    {"label": "Spot", "value": "spot"},
+                                                    {"label": "Futures", "value": "futures"},
+                                                ],
+                                                value="",
+                                                clearable=False,
+                                            ),
+                                        ],
+                                        style={"width": "220px"},
+                                    ),
+                                    html.Div(
+                                        [
+                                            html.Label("Select backtest_id"),
+                                            dcc.Dropdown(
+                                                id="bt-id",
+                                                options=[],
+                                                value=None,
+                                                placeholder="Pick a backtest…",
+                                            ),
+                                        ],
+                                        style={"flex": 1, "marginLeft": "14px"},
+                                    ),
+                                ],
+                                style={"display": "flex", "gap": "10px", "marginBottom": "12px"},
+                            ),
+
+                            html.Div(
+                                id="bt-cards",
+                                style={"display": "flex", "gap": "10px", "flexWrap": "wrap"},
+                            ),
+
+                            dcc.Graph(id="bt-equity-graph", style={"marginTop": "10px"}),
+
+                            html.H4("Trades"),
+                            html.Div(id="bt-trades-table-wrap"),
+                        ],
+                    ),
+
+                    dcc.Tab(
+                        label="Runs",
+                        value="tab-runs",
+                        children=[
+                            html.H4("Runs"),
+                            html.Div(id="runs-table-wrap"),
+                        ],
+                    ),
+
+                    dcc.Tab(
+                        label="Train Jobs",
+                        value="tab-train",
+                        children=[
+                            html.H4("Train Jobs"),
+                            html.Div(id="train-table-wrap"),
+                        ],
+                    ),
                 ],
-                style={"padding": "0 16px 16px 16px"},
             ),
         ],
-        style={"fontFamily": "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"},
+        style={"maxWidth": "1200px", "margin": "0 auto", "padding": "16px"},
     )
-
