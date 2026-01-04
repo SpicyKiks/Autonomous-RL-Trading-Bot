@@ -80,4 +80,27 @@ evaluation:
         low: 30.0
         high: 70.0
 
-live: {}
+live:
+  policy: "baseline"               # baseline|sb3
+  strategy: "buy_and_hold"         # baseline only
+  strategy_params: {}              # optional overrides
+  sb3_algo: "ppo"                  # sb3 only
+  sb3_model_path: ""               # sb3 only (path to model zip)
+
+  initial_equity: 1000.0
+  position_fraction: 1.0
+  fee_bps: 10.0
+  slippage_bps: 5.0
+
+  futures_leverage: 3.0
+  maintenance_margin_rate: 0.005
+  stop_on_liquidation: true
+
+  lookback: 30
+  poll_seconds: 2.0
+  require_settled_ms: 250
+
+  kill_switch_path: "artifacts/KILL_SWITCH"
+  max_drawdown: 0.25
+  min_seconds_between_trades: 15.0
+  max_trades_per_hour: 30
