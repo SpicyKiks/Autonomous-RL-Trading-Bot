@@ -30,3 +30,9 @@ dist/
 
 # Logs
 *.log
+
+# Virtual environments (NEVER commit)
+.venv/
+.venv_test/
+venv/
+env/
