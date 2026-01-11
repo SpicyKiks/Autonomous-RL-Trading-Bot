@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -35,23 +36,22 @@ def _make_dataset_id(mode: str, symbol: str, interval: str, cfg_hash: str) -> st
     return f"{_utc_ts()}_{mode}_dataset_{symbol}_{interval}_{short_hash(cfg_hash, 10)}"
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Build a clean contiguous dataset from DB candles (Step 4)."
+        description="Build a clean contiguous dataset from DB candles."
     )
-    parser.add_argument(
-        "--mode", default=None, help="spot|futures (via configs/modes/* overrides)."
-    )
-    parser.add_argument("--symbol", default=None, help="e.g. BTCUSDT")
-    parser.add_argument("--interval", default=None, help="e.g. 1m, 1h")
-    parser.add_argument("--minutes", type=int, default=None, help="window size in minutes")
-    parser.add_argument("--strict", action="store_true", help="fail if gaps/duplicates detected")
-    parser.add_argument("--no-strict", action="store_true", help="override strict to false")
-    parser.add_argument("--train-frac", type=float, default=0.75, help="Training split fraction (default: 0.75)")
-    parser.add_argument("--val-frac", type=float, default=0.10, help="Validation split fraction (default: 0.10)")
-    parser.add_argument("--test-frac", type=float, default=0.15, help="Test split fraction (default: 0.15)")
-    parser.add_argument("--scaler", default="robust", help="Scaler type: robust (default)")
-    args = parser.parse_args()
+    parser.add_argument("--mode", default=None)
+    parser.add_argument("--symbol", default=None)
+    parser.add_argument("--interval", default=None)
+    parser.add_argument("--minutes", type=int, default=None)
+    parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--no-strict", action="store_true")
+    parser.add_argument("--train-frac", type=float, default=0.75)
+    parser.add_argument("--val-frac", type=float, default=0.10)
+    parser.add_argument("--test-frac", type=float, default=0.15)
+    parser.add_argument("--scaler", default="robust")
+
+    args = parser.parse_args(argv)
 
     ensure_artifact_tree()
 
@@ -80,43 +80,23 @@ def main() -> int:
     test_frac = float(args.test_frac)
     scaler_type = str(args.scaler).strip().lower()
 
-    # Validate splits sum to 1.0
-    total_frac = train_frac + val_frac + test_frac
-    if abs(total_frac - 1.0) > 1e-6:
-        raise SystemExit(f"ERROR: Split fractions must sum to 1.0, got {total_frac}")
+    if abs(train_frac + val_frac + test_frac - 1.0) > 1e-6:
+        raise SystemExit("Split fractions must sum to 1.0")
 
     db_path = migrate(cfg)
 
     dataset_id = _make_dataset_id(mode, symbol, interval, cfg_hash)
-    run_id = dataset_id  # keep run_id==dataset_id for traceability
+    run_id = dataset_id
 
     run_dir = artifacts_dir() / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
 
-    log_level = (cfg.get("logging", {}) or {}).get("level", "INFO")
-    log_console = bool((cfg.get("logging", {}) or {}).get("console", True))
-    log_file = bool((cfg.get("logging", {}) or {}).get("file", True))
-
-    per_run_log: Optional[str] = None
-    global_log: Optional[str] = None
-    log_paths: List[str] = []
-
-    if log_file:
-        per_run_log_p = run_dir / "run.log"
-        global_log_p = artifacts_dir() / "logs" / f"{run_id}.log"
-        per_run_log = str(per_run_log_p)
-        global_log = str(global_log_p)
-        log_paths = [per_run_log, global_log]
-        logger = configure_logging(
-            level=log_level,
-            console=log_console,
-            file_paths=[per_run_log_p, global_log_p],
-            run_id=run_id,
-        )
-    else:
-        logger = configure_logging(
-            level=log_level, console=log_console, file_paths=None, run_id=run_id
-        )
+    logger = configure_logging(
+        level="INFO",
+        console=True,
+        file_paths=[run_dir / "run.log"],
+        run_id=run_id,
+    )
 
     seed = int(cfg["run"]["seed"])
     seed_report = set_global_seed(seed)
@@ -136,24 +116,15 @@ def main() -> int:
             status="CREATED",
             run_dir=str(run_dir),
             run_json_path=run_json_path,
-            run_log_path=per_run_log,
-            global_log_path=global_log,
+            run_log_path=str(run_dir / "run.log"),
+            global_log_path=None,
         )
         conn.commit()
 
     out_base = artifacts_dir() / "datasets"
     end_ms = _now_ms()
 
-    logger.info("Step 4 dataset build starting.")
-    logger.info(
-        "market_type=%s symbol=%s interval=%s window_minutes=%s strict=%s",
-        market_type,
-        symbol,
-        interval,
-        window_minutes,
-        strict,
-    )
-    logger.info("db_path=%s", str(db_path))
+    logger.info("Building dataset...")
 
     with connect(db_path) as conn:
         result = build_dataset_from_db(
@@ -177,48 +148,15 @@ def main() -> int:
         "run_id": run_id,
         "created_utc": created_utc,
         "kind": "dataset",
-        "mode": mode,
-        "market_type": market_type,
         "symbol": symbol,
         "interval": interval,
-        "window_minutes": window_minutes,
-        "strict_gaps": strict,
-        "features": features,
-        "quality_report": result.report.to_dict(),
-        "candles_used": result.candles_used,
-        "window_points": result.window_points,
         "dataset_dir": str(result.out_dir),
-        "npz_path": str(result.npz_path),
-        "csv_path": str(result.csv_path),
-        "meta_path": str(result.meta_path),
-        "config_hash": cfg_hash,
-        "db_path": str(db_path),
-        "seed_report": seed_report,
-        "log_paths": log_paths,
         "status": "DONE",
     }
-    Path(run_json_path).write_text(
-        json.dumps(run_meta, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
 
-    with connect(db_path) as conn:
-        upsert_run(
-            conn,
-            run_id=run_id,
-            kind="dataset",
-            mode=mode,
-            created_utc=created_utc,
-            config_hash=cfg_hash,
-            seed=seed,
-            status="DONE",
-            run_dir=str(run_dir),
-            run_json_path=run_json_path,
-            run_log_path=per_run_log,
-            global_log_path=global_log,
-        )
-        conn.commit()
+    Path(run_json_path).write_text(json.dumps(run_meta, indent=2))
 
-    logger.info("DONE: dataset_id=%s out_dir=%s", dataset_id, str(result.out_dir))
+    logger.info("DONE: %s", result.out_dir)
     print(f"OK: dataset built at {result.out_dir}")
     return 0
 

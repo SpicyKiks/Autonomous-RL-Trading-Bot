@@ -1,223 +1,321 @@
+# src/autonomous_rl_trading_bot/training/trainer.py
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, fields as dc_fields
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-import numpy as np
-
-from autonomous_rl_trading_bot.rl.dataset import LoadedDataset
+from autonomous_rl_trading_bot.common.fs import ensure_dir, write_json
+from autonomous_rl_trading_bot.common.hashing import dataset_hash
+from autonomous_rl_trading_bot.common.logging import get_logger
+from autonomous_rl_trading_bot.evaluation.metrics import compute_metrics
+from autonomous_rl_trading_bot.evaluation.reporting import generate_run_report
+from autonomous_rl_trading_bot.repro.repro import build_repro_payload
+from autonomous_rl_trading_bot.rl.dataset import Dataset
 from autonomous_rl_trading_bot.rl.env_trading import TradingEnv, TradingEnvConfig
-from autonomous_rl_trading_bot.rl.metrics import compute_equity_metrics
 
-from .callbacks import CallbackConfig, build_callbacks
-from .checkpointing import (
-    best_model_path,
-    model_path,
-    tensorboard_dir,
-    write_json,
-    write_training_manifest,
-)
-from .sb3_factory import SB3FactoryConfig, create_model
+from stable_baselines3 import A2C, DQN, PPO
 
-try:
-    from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
-except ModuleNotFoundError as e:  # pragma: no cover
-    raise RuntimeError(
-        "stable-baselines3 is required for training. Install deps: pip install -e ."
-    ) from e
+logger = get_logger(__name__)
 
 
-@dataclass
+def _asdict_dataclass(obj: Any) -> Dict[str, Any]:
+    if not hasattr(obj, "__dataclass_fields__"):
+        raise TypeError("Expected a dataclass instance")
+    return {f.name: getattr(obj, f.name) for f in dc_fields(obj)}
+
+
+# =========================
+# Config
+# =========================
+@dataclass(frozen=True)
 class TrainConfig:
-    algo: str = "ppo"  # ppo|dqn
-    total_timesteps: int = 50_000
-    lookback: int = 30
-    train_split: float = 0.8
+    # dataset selection
+    dataset_id: str
 
+    # core training args
+    mode: str  # "spot" | "futures"
+    algo: str  # "ppo" | "a2c" | "dqn"
+    timesteps: int
+    seed: int
+
+    # dataset split selection
+    # Backwards compatible:
+    # - may be a split name ("train"|"val"|"test") if dataset meta provides split ranges
+    # - may be numeric weights (e.g., 8/2) to time-split the dataset
+    # - may be None => auto (prefer meta splits if present; else time-split 80/20)
+    train_split: Any = None
+    eval_split: Any = None
+
+    # env/hparams
+    device: str = "cpu"
+    lookback: int = 30
     fee_bps: float = 10.0
     slippage_bps: float = 5.0
 
-    initial_equity: float = 1000.0
-    position_fraction: float = 1.0
-    futures_leverage: float = 3.0
+    # capital / sizing
+    initial_cash: float = 1000.0
+    initial_equity: Optional[float] = None  # alias to initial_cash (wins if provided)
+    position_fraction: float = 1.0  # [0,1]
+    futures_leverage: float = 3.0  # only used for futures mode (if env supports)
 
-    reward_kind: str = "log_equity"  # log_equity|delta_equity
-    tensorboard: bool = True
+    # reward
+    reward_kind: str = "log_equity"  # log_equity|delta_equity (forwarded to env if supported)
 
-    checkpoint_freq: int = 10_000
-    eval_freq: int = 10_000
+    # outputs
+    artifacts_dir: str = "artifacts"
+    run_name: Optional[str] = None
 
-    # Optional algo hyperparams (merged into SB3 ctor kwargs)
-    algo_params: Dict[str, Any] | None = None
+    # optional explicit output locations (used by run_train.py plumbing)
+    run_dir: Optional[Path] = None  # base runs dir OR fully qualified run output dir (see train_and_evaluate)
+    models_dir: Optional[Path] = None
+
+    # evaluation
+    eval_episodes: int = 1
+
+    # logging
+    log_level: str = "INFO"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "mode", str(self.mode).strip().lower())
+        object.__setattr__(self, "algo", str(self.algo).strip().lower())
+        object.__setattr__(self, "device", str(self.device).strip())
+
+        if self.mode not in {"spot", "futures"}:
+            raise ValueError("mode must be one of: spot, futures")
+
+        if self.timesteps <= 0:
+            raise ValueError("timesteps must be > 0")
+
+        if self.lookback <= 0:
+            raise ValueError("lookback must be > 0")
+
+        if float(self.fee_bps) < 0:
+            raise ValueError("fee_bps must be >= 0")
+
+        if float(self.slippage_bps) < 0:
+            raise ValueError("slippage_bps must be >= 0")
+
+        if float(self.position_fraction) <= 0 or float(self.position_fraction) > 1.0:
+            raise ValueError("position_fraction must be in (0, 1].")
+
+        if float(self.futures_leverage) <= 0:
+            raise ValueError("futures_leverage must be > 0.")
+
+        # unify naming: if initial_equity is provided, it wins.
+        if self.initial_equity is not None:
+            object.__setattr__(self, "initial_cash", float(self.initial_equity))
+
+        rk = str(self.reward_kind).strip().lower()
+        object.__setattr__(self, "reward_kind", rk)
 
 
-def _split_indices(n: int, frac: float) -> Tuple[int, int, int, int]:
-    frac = float(frac)
-    frac = min(max(frac, 0.5), 0.95)
-    split = int(n * frac)
-    return 0, split, split, n
+def _make_algo(algo: str):
+    a = algo.lower().strip()
+    if a == "ppo":
+        return PPO
+    if a == "a2c":
+        return A2C
+    if a == "dqn":
+        return DQN
+    raise ValueError(f"Unknown algo '{algo}'. Expected one of: ppo, a2c, dqn")
 
 
-def _make_env(data: Dict[str, np.ndarray], cfg: TradingEnvConfig, seed: int, feature_list: Optional[list[str]] = None) -> TradingEnv:
-    return TradingEnv(data, cfg, seed=seed, feature_list=feature_list)
+def _parse_split(v: Any) -> Tuple[str, Any]:
+    """Return (kind, value) where kind in {'none','name','weight'}."""
+    if v is None:
+        return ("none", None)
+    if isinstance(v, (int, float)):
+        return ("weight", float(v))
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s == "":
+            return ("none", None)
+        if s in {"train", "val", "valid", "validation", "test"}:
+            # normalise common spellings
+            if s in {"valid", "validation"}:
+                s = "val"
+            return ("name", s)
+        # numeric string?
+        try:
+            f = float(s)
+            return ("weight", f)
+        except ValueError:
+            return ("name", s)
+    # unknown type: keep as name-ish (stringify) to avoid crashing on legacy inputs
+    return ("name", str(v).strip().lower())
 
 
-def _rollout_policy(env: TradingEnv, model) -> tuple[np.ndarray, list[dict]]:
-    obs, _ = env.reset()
-    equity_curve = [float(env.equity)]
-    done = False
-    while not done:
-        action, _ = model.predict(obs.astype(np.float32, copy=False), deterministic=True)
-        obs, _, done, _, info = env.step(int(action))
-        equity_curve.append(float(info.get("equity", env.equity)))
-    return np.asarray(equity_curve, dtype=np.float64), list(env.trades)
+def _split_time_weighted(ds: Dataset, train_weight: float, eval_weight: float) -> Tuple[Dataset, Dataset]:
+    if train_weight <= 0 or eval_weight <= 0:
+        raise ValueError("train_split and eval_split weights must be > 0")
+    total = float(train_weight + eval_weight)
+    train_frac = float(train_weight) / total
+    train_ds, eval_ds = ds.split_time(train_frac=train_frac)
+    return train_ds, eval_ds
+
+
+def _resolve_train_eval_datasets(cfg: TrainConfig, base_ds: Dataset) -> Tuple[Dataset, Dataset]:
+    """Resolve train/eval datasets using either named splits (preferred) or a time split fallback."""
+    train_kind, train_val = _parse_split(cfg.train_split)
+    eval_kind, eval_val = _parse_split(cfg.eval_split)
+
+    splits = {}
+    try:
+        splits = dict(base_ds.meta.get("splits") or {})
+    except Exception:
+        splits = {}
+
+    # If any named split is requested OR the dataset provides split metadata, prefer split-based loading.
+    if train_kind == "name" or eval_kind == "name" or splits:
+        if not splits:
+            # requested split names but dataset doesn't support it -> fall back to time split
+            train_w = train_val if train_kind == "weight" else 8.0
+            eval_w = eval_val if eval_kind == "weight" else 2.0
+            return _split_time_weighted(base_ds, float(train_w), float(eval_w))
+
+        train_name: Optional[str] = train_val if train_kind == "name" else None
+        eval_name: Optional[str] = eval_val if eval_kind == "name" else None
+
+        if train_name is None:
+            train_name = "train" if "train" in splits else next(iter(splits.keys()))
+        if eval_name is None:
+            if "val" in splits:
+                eval_name = "val"
+            elif "test" in splits:
+                eval_name = "test"
+            else:
+                # degenerate: only one split exists, reuse it for eval
+                eval_name = train_name
+
+        train_ds = Dataset.load(cfg.dataset_id, market_type=cfg.mode, split=train_name)
+        eval_ds = Dataset.load(cfg.dataset_id, market_type=cfg.mode, split=eval_name)
+        return train_ds, eval_ds
+
+    # Default: time split (legacy)
+    train_w = train_val if train_kind == "weight" else 8.0
+    eval_w = eval_val if eval_kind == "weight" else 2.0
+    return _split_time_weighted(base_ds, float(train_w), float(eval_w))
+
+
+def _make_env_config(cfg: TrainConfig) -> TradingEnvConfig:
+    """
+    Build TradingEnvConfig but only pass keys it actually supports.
+    This makes trainer resilient when env config changes.
+    """
+    env_cfg_kwargs: Dict[str, Any] = {
+        "mode": cfg.mode,
+        "lookback": cfg.lookback,
+        "fee_bps": cfg.fee_bps,
+        "slippage_bps": cfg.slippage_bps,
+        "initial_cash": cfg.initial_cash,
+        "seed": cfg.seed,
+        "position_fraction": cfg.position_fraction,
+        "futures_leverage": cfg.futures_leverage,
+        "reward_kind": cfg.reward_kind,
+    }
+
+    allowed = {f.name for f in dc_fields(TradingEnvConfig)}
+    filtered = {k: v for k, v in env_cfg_kwargs.items() if k in allowed}
+    return TradingEnvConfig(**filtered)
 
 
 def train_and_evaluate(
     *,
-    dataset: LoadedDataset,
-    market_type: str,
-    seed: int,
-    run_dir: Path,
     cfg: TrainConfig,
-    project_cfg: Optional[Dict[str, Any]] = None,
+    dataset: Optional[Dataset] = None,
+    run_id: Optional[str] = None,
+    out_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    run_dir = Path(run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
+    """
+    End-to-end training + evaluation run.
 
-    data = dataset.data
-    n = int(len(data["close"]))
-    s0, s1, e0, e1 = _split_indices(n, cfg.train_split)
+    Backwards/CLI-compatible plumbing:
+    - run_train.py passes dataset/cfg/run_id/out_dir.
+    - other callers may call train_and_evaluate(cfg=...).
+    """
+    # --- dataset ---
+    ds = dataset if dataset is not None else Dataset.load(cfg.dataset_id, market_type=cfg.mode, split=None)
+    ds_hash = dataset_hash(ds)
 
-    train_env_cfg = TradingEnvConfig(
-        market_type=market_type,
-        lookback=cfg.lookback,
-        fee_bps=cfg.fee_bps,
-        slippage_bps=cfg.slippage_bps,
-        initial_equity=cfg.initial_equity,
-        position_fraction=cfg.position_fraction,
-        futures_leverage=cfg.futures_leverage,
-        reward_kind=cfg.reward_kind,
-        start_index=s0,
-        end_index=s1,
-    )
-    eval_env_cfg = TradingEnvConfig(
-        market_type=market_type,
-        lookback=cfg.lookback,
-        fee_bps=cfg.fee_bps,
-        slippage_bps=cfg.slippage_bps,
-        initial_equity=cfg.initial_equity,
-        position_fraction=cfg.position_fraction,
-        futures_leverage=cfg.futures_leverage,
-        reward_kind=cfg.reward_kind,
-        start_index=e0,
-        end_index=e1,
-    )
+    # --- naming / folders ---
+    if out_dir is not None:
+        run_dir = Path(out_dir)
+        ensure_dir(run_dir)
+        run_name = cfg.run_name or (run_id if run_id is not None else run_dir.name)
+    else:
+        artifacts_root = Path(cfg.artifacts_dir)
+        run_name = cfg.run_name or (
+            run_id if run_id is not None else f"{cfg.mode}_{cfg.algo}_seed{cfg.seed}_{ds_hash[:8]}"
+        )
+        run_dir = artifacts_root / run_name
+        ensure_dir(run_dir)
 
-    feature_list = getattr(dataset, 'feature_list', None)
+    # --- split ---
+    train_ds, eval_ds = _resolve_train_eval_datasets(cfg, ds)
 
-    def make_train():
-        return _make_env(data, train_env_cfg, seed, feature_list)
+    # --- env config ---
+    env_cfg = _make_env_config(cfg)
 
-    def make_eval():
-        return _make_env(data, eval_env_cfg, seed + 1, feature_list)
+    # --- build envs ---
+    train_env = TradingEnv(train_ds, env_cfg)
+    eval_env = TradingEnv(eval_ds, env_cfg)
 
-    train_vec = VecMonitor(DummyVecEnv([make_train]))
-    eval_vec = VecMonitor(DummyVecEnv([make_eval]))
-
-    tb_dir = str(tensorboard_dir(run_dir)) if cfg.tensorboard else None
-
-    # Merge algo params from config file if present
-    algo_params: Dict[str, Any] = {}
-    if project_cfg:
-        tb = project_cfg.get("training", {}) or {}
-        sb3 = tb.get("sb3", {}) or {}
-        ap = sb3.get((cfg.algo or "").strip().lower(), {}) or {}
-        if isinstance(ap, dict):
-            algo_params.update(ap)
-    if cfg.algo_params:
-        algo_params.update(cfg.algo_params)
-
-    model = create_model(
-        env=train_vec,
-        cfg=SB3FactoryConfig(
-            algo=cfg.algo,
-            tensorboard_log=tb_dir,
-            seed=seed,
-            verbose=1,
-            device="auto",
-            algo_params=algo_params,
-        ),
+    # --- model ---
+    AlgoCls = _make_algo(cfg.algo)
+    model = AlgoCls(
+        "MlpPolicy",
+        train_env,
+        verbose=0,
+        device=cfg.device,
+        seed=cfg.seed,
     )
 
-    cb = build_callbacks(
-        run_dir=run_dir,
-        eval_env=eval_vec,
-        cfg=CallbackConfig(
-            checkpoint_freq=int(cfg.checkpoint_freq),
-            eval_freq=int(cfg.eval_freq),
-            n_eval_episodes=1,
-            deterministic_eval=True,
-            verbose=1,
-        ),
+    # --- fit ---
+    model.learn(total_timesteps=int(cfg.timesteps))
+
+    # --- eval ---
+    all_episode_infos: list[Dict[str, Any]] = []
+    for _ in range(int(cfg.eval_episodes)):
+        obs, _ = eval_env.reset()
+        done = False
+        truncated = False
+        while not (done or truncated):
+            action, _ = model.predict(obs, deterministic=True)
+            obs, reward, done, truncated, info = eval_env.step(action)
+            if isinstance(info, dict):
+                all_episode_infos.append(info)
+
+    metrics = compute_metrics(all_episode_infos)
+
+    # --- repro payload ---
+    repro = build_repro_payload(
+        train_config=_asdict_dataclass(cfg),
+        dataset={"dataset_id": cfg.dataset_id, "dataset_hash": ds_hash},
+        metrics=metrics,
     )
 
-    model.learn(total_timesteps=int(cfg.total_timesteps), callback=cb)
+    # --- write artifacts ---
+    write_json(run_dir / "config.json", _asdict_dataclass(cfg))
+    write_json(run_dir / "dataset.json", {"dataset_id": cfg.dataset_id, "dataset_hash": ds_hash})
+    write_json(run_dir / "metrics.json", metrics)
+    write_json(run_dir / "repro.json", repro)
 
-    # Save final model
-    mpath = model_path(run_dir)
-    model.save(str(mpath))
-
-    # Evaluate best model if it exists
-    best_path = best_model_path(run_dir)
-    eval_model = model
-    best_model_str: Optional[str] = None
-    if best_path.exists():
-        best_model_str = str(best_path)
-        try:
-            eval_model = type(model).load(best_model_str)
-        except Exception:
-            eval_model = model
-
-    # Manual evaluation to get equity curve + trades
-    eval_env = _make_env(data, eval_env_cfg, seed + 123, feature_list)
-    equity, trades = _rollout_policy(eval_env, eval_model)
-
-    import pandas as pd
-
-    pd.DataFrame({"step": np.arange(equity.size, dtype=np.int64), "equity": equity}).to_csv(
-        run_dir / "eval_equity.csv", index=False
-    )
-    pd.DataFrame(trades).to_csv(run_dir / "eval_trades.csv", index=False)
-
-    m = compute_equity_metrics(equity)
-    metrics = {
-        "final_equity": m.final_equity,
-        "total_return": m.total_return,
-        "max_drawdown": m.max_drawdown,
-        "sharpe": m.sharpe,
-        "fee_total_eval": float(eval_env.fee_total),
-        "slippage_total_eval": float(eval_env.slip_total),
-        "eval_steps": int(equity.size),
-        "algo_params": algo_params,
-    }
-    write_json(run_dir / "eval_metrics.json", metrics)
-
-    split = {"train": [s0, s1], "eval": [e0, e1]}
-    write_training_manifest(
-        run_dir=run_dir,
-        train_params=asdict(cfg),
-        split=split,
-        dataset_meta=dataset.meta,
-        extra={"market_type": market_type},
+    report_path = generate_run_report(
+        out_dir=run_dir,
+        run_name=run_name,
+        train_config=_asdict_dataclass(cfg),
+        dataset={"dataset_id": cfg.dataset_id, "dataset_hash": ds_hash},
+        metrics=metrics,
+        repro=repro,
     )
 
-    return {
-        "model_path": str(mpath),
-        "best_model_path": best_model_str,
-        "tensorboard_dir": tb_dir,
+    payload: Dict[str, Any] = {
+        "run_name": run_name,
+        "run_dir": str(run_dir),
+        "dataset_id": cfg.dataset_id,
+        "dataset_hash": ds_hash,
         "metrics": metrics,
-        "train_split": split,
+        "report_path": str(report_path) if report_path is not None else None,
     }
-
+    return payload

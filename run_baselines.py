@@ -86,7 +86,7 @@ def _resolve_dataset_dir(
     return _latest_dataset_dir(desired_market_type)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Step 5: Run baseline strategies on TEST split.")
     parser.add_argument("--mode", default=None, help="spot/futures. Used for defaults.")
     parser.add_argument("--dataset-id", default=None, help="Dataset ID")
@@ -109,7 +109,7 @@ def main() -> int:
     parser.add_argument("--leverage", type=float, default=None)
     parser.add_argument("--maintenance-margin-rate", type=float, default=None)
     
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     ensure_artifact_tree()
 

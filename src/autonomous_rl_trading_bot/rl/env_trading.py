@@ -10,7 +10,18 @@ from gymnasium import spaces
 
 @dataclass
 class TradingEnvConfig:
-    market_type: str  # spot|futures
+    """Configuration for :class:`TradingEnv`.
+
+    Notes:
+    - trainer.py passes `mode`, `seed`, `start_index`, and `end_index`
+    - `market_type` is kept for backwards compatibility (spot|futures)
+    """
+
+    # Backwards-compatible: keep `market_type`, but allow trainer to pass `mode`.
+    market_type: str = "spot"  # spot|futures
+    mode: str = "spot"  # alias for market_type (trainer passes this)
+    seed: int = 0
+
     lookback: int = 30
     fee_bps: float = 10.0
     slippage_bps: float = 5.0
@@ -18,281 +29,157 @@ class TradingEnvConfig:
     position_fraction: float = 1.0
     futures_leverage: float = 3.0  # used only for futures
     reward_kind: str = "log_equity"  # log_equity|delta_equity
+
     # Split boundaries (inclusive start, exclusive end)
     start_index: int = 0
     end_index: int = 0
 
+    def __post_init__(self) -> None:
+        # Normalise: prefer explicit mode if provided.
+        if self.mode:
+            self.market_type = str(self.mode).strip().lower()
+        else:
+            self.market_type = str(self.market_type).strip().lower()
+
+        if self.market_type not in {"spot", "futures"}:
+            raise ValueError(f"Unsupported market_type/mode: {self.market_type!r}")
+        if self.lookback <= 0:
+            raise ValueError("lookback must be > 0")
+
 
 class TradingEnv(gym.Env):
     """
-    Deterministic offline trading env over a fixed price series.
-    Observation: flattened [lookback x n_features] window ending at t (inclusive).
-    Actions:
-      spot:   0=HOLD, 1=LONG(+1), 2=FLAT(0)
-      futures:0=HOLD, 1=LONG(+1), 2=FLAT(0), 3=SHORT(-1)
+    Simple trading environment:
+      - Observations: lookback window of features (default uses close returns only)
+      - Actions:
+          spot: 0=hold, 1=long, 2=flat
+          futures: 0=hold, 1=long, 2=short, 3=flat
     """
+
     metadata = {"render_modes": []}
 
-    def __init__(self, data: Dict[str, np.ndarray], cfg: TradingEnvConfig, seed: int = 0, feature_list: Optional[List[str]] = None):
+    def __init__(
+        self,
+        data: Dict[str, np.ndarray],
+        cfg: TradingEnvConfig,
+        seed: Optional[int] = None,
+        feature_list: Optional[List[str]] = None,
+    ) -> None:
         super().__init__()
-        self.data = data
+        if seed is None:
+            seed = int(getattr(cfg, "seed", 0) or 0)
+        seed = int(seed)
+
         self.cfg = cfg
-        self._rng = np.random.default_rng(seed)
+        self.rng = np.random.default_rng(seed)
 
-        mt = cfg.market_type
-        if mt not in ("spot", "futures"):
-            raise ValueError(f"market_type must be spot|futures, got {mt}")
-        if cfg.lookback < 1:
-            raise ValueError("lookback must be >= 1")
-
-        # required columns
-        for k in ("close", "volume"):
-            if k not in data:
-                raise KeyError(f"dataset missing key: {k}")
-
+        # Required arrays
+        self.open_time = np.asarray(data["open_time_ms"], dtype=np.int64)
         self.close = np.asarray(data["close"], dtype=np.float64)
-        self.volume = np.asarray(data["volume"], dtype=np.float64)
-        self.open_time_ms = np.asarray(data.get("open_time_ms", np.arange(self.close.size)), dtype=np.int64)
 
-        if cfg.end_index <= 0 or cfg.end_index > self.close.size:
-            raise ValueError("end_index must be set to a valid upper bound")
-        if not (0 <= cfg.start_index < cfg.end_index):
-            raise ValueError("invalid start/end indices")
+        # Optional features matrix
+        self.features = None
+        if "features" in data:
+            self.features = np.asarray(data["features"], dtype=np.float64)
 
-        # Use feature_list from meta if provided, otherwise fallback to default
-        if feature_list is None:
-            feature_list = ["log_return", "return", "close_norm", "vol_norm"]
-        
         self.feature_list = feature_list
-        
-        # Build feature matrix using scaled features if available, otherwise compute on-the-fly
-        feature_arrays = []
-        for feat_name in feature_list:
-            scaled_key = f"{feat_name}_scaled"
-            if scaled_key in data:
-                # Use pre-scaled feature
-                feat = np.asarray(data[scaled_key], dtype=np.float32)
-            elif feat_name == "close_norm":
-                first_close = float(self.close[cfg.start_index])
-                feat = (self.close / max(first_close, 1e-12)).astype(np.float32)
-            elif feat_name == "vol_norm":
-                feat = np.log1p(np.maximum(self.volume, 0.0)).astype(np.float32)
-            elif feat_name in data:
-                feat = np.asarray(data[feat_name], dtype=np.float32)
-            else:
-                raise KeyError(f"Feature {feat_name} not found in dataset and cannot be computed")
-            feature_arrays.append(feat)
-        
-        self.features = np.stack(feature_arrays, axis=1).astype(np.float32)  # (T, feature_dim)
-        self.n_features = int(self.features.shape[1])
-        
-        # Account vector dimension: [cash_ratio, position_ratio, equity_ratio]
-        self.account_dim = 3
-        
-        # Observation: flattened lookback window + account vector
-        obs_shape = (cfg.lookback * self.n_features + self.account_dim,)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=obs_shape, dtype=np.float32)
 
-        if mt == "spot":
+        # Boundaries
+        if cfg.end_index <= 0 or cfg.end_index > self.close.size:
+            self.cfg.end_index = int(self.close.size)
+        if not (0 <= cfg.start_index < cfg.end_index):
+            self.cfg.start_index = 0
+
+        self.t = int(self.cfg.start_index)
+        self.done = False
+
+        # State
+        self.equity = float(cfg.initial_equity)
+        self.cash = float(cfg.initial_equity)
+        self.asset_qty = 0.0  # spot holdings
+        self.futures_pos = 0.0  # futures position qty (+ long, - short)
+        self.entry_price = 0.0
+        self.fee_total = 0.0
+        self.slip_total = 0.0
+
+        # Action space
+        if self.cfg.market_type == "spot":
             self.action_space = spaces.Discrete(3)
         else:
             self.action_space = spaces.Discrete(4)
 
-        self._reset_state()
+        # Observation space (lookback x dim)
+        obs_dim = 1
+        if self.features is not None:
+            obs_dim = int(self.features.shape[1])
 
-    def _reset_state(self) -> None:
-        self.t = max(self.cfg.start_index, self.cfg.lookback)
+        self.obs_dim = obs_dim
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(self.cfg.lookback, obs_dim), dtype=np.float32
+        )
+
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
+        if seed is not None:
+            self.rng = np.random.default_rng(int(seed))
+
+        self.t = int(self.cfg.start_index)
         self.done = False
 
-        # Portfolio state
-        self.cash = float(self.cfg.initial_equity)
-        self.qty = 0.0  # base qty for spot, contracts qty for futures
-        self.entry_price = 0.0  # futures avg entry
         self.equity = float(self.cfg.initial_equity)
-
+        self.cash = float(self.cfg.initial_equity)
+        self.asset_qty = 0.0
+        self.futures_pos = 0.0
+        self.entry_price = 0.0
         self.fee_total = 0.0
         self.slip_total = 0.0
 
-        # For logging trades
-        self.trades: List[Dict[str, Any]] = []
-
-    def seed(self, seed: Optional[int] = None) -> None:
-        if seed is None:
-            seed = 0
-        self._rng = np.random.default_rng(int(seed))
-
-    def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
-        if seed is not None:
-            self.seed(seed)
-        self._reset_state()
         obs = self._get_obs()
-        info = {"equity": self.equity, "t": self.t}
+        info: Dict[str, Any] = {"equity": float(self.equity), "t": int(self.t)}
         return obs, info
 
-    def _get_obs(self) -> np.ndarray:
-        lb = self.cfg.lookback
-        start = self.t - lb
-        end = self.t
-        window = self.features[start:end, :]  # shape (lb, n_features)
-        window_flat = window.reshape(-1).astype(np.float32, copy=False)
-        
-        # Account vector: [cash/initial_equity, position_value/equity, equity/initial_equity]
-        cash_ratio = self.cash / max(self.cfg.initial_equity, 1e-12)
-        
-        price = self._price()
-        if self.cfg.market_type == "spot":
-            position_value = self.qty * price
-        else:
-            position_value = abs(self.qty) * price if abs(self.qty) > 1e-12 else 0.0
-        
-        position_ratio = position_value / max(self.equity, 1e-12) if self.equity > 0 else 0.0
-        equity_ratio = self.equity / max(self.cfg.initial_equity, 1e-12)
-        
-        account_vec = np.array([cash_ratio, position_ratio, equity_ratio], dtype=np.float32)
-        
-        # Concatenate window + account vector
-        obs = np.concatenate([window_flat, account_vec], axis=0).astype(np.float32)
-        return obs
-
     def _price(self) -> float:
-        return float(self.close[self.t])
+        # Clamp to avoid out-of-bounds when algorithms step exactly at the boundary.
+        idx = min(max(int(self.t), 0), int(len(self.close) - 1))
+        return float(self.close[idx])
 
-    def _apply_costs(self, notional: float) -> Tuple[float, float]:
-        fee = notional * (self.cfg.fee_bps / 10000.0)
-        slip = notional * (self.cfg.slippage_bps / 10000.0)
+    def _mark_to_market(self, price: float) -> float:
+        if self.cfg.market_type == "spot":
+            return float(self.cash + self.asset_qty * price)
+        # futures equity: collateral = cash; pnl = pos*(price-entry)
+        pnl = float(self.futures_pos * (price - self.entry_price))
+        return float(self.cash + pnl)
+
+    def _apply_fee_and_slip(self, notional: float) -> Tuple[float, float]:
+        fee = abs(notional) * (self.cfg.fee_bps / 10_000.0)
+        slip = abs(notional) * (self.cfg.slippage_bps / 10_000.0)
         self.fee_total += fee
         self.slip_total += slip
         return fee, slip
 
-    def _mark_to_market(self, price: float) -> float:
-        if self.cfg.market_type == "spot":
-            return self.cash + self.qty * price
-        # futures: equity = cash + unrealized pnl
-        if abs(self.qty) < 1e-18:
-            return self.cash
-        return self.cash + self.qty * (price - self.entry_price)
+    def _get_obs(self) -> np.ndarray:
+        lb = int(self.cfg.lookback)
+        t0 = int(max(self.t - lb + 1, 0))
+        t1 = int(self.t + 1)
 
-    def _execute_spot_to_target(self, target: float, price: float) -> None:
-        # target in {-1,0,+1} but spot will clamp negative to 0
-        target = max(0.0, float(target))
-        # target_qty uses cash-based sizing (no leverage)
-        target_notional = self._mark_to_market(price) * self.cfg.position_fraction
-        target_qty = (target_notional / price) * target
-
-        delta = target_qty - self.qty
-        if abs(delta) < 1e-12:
-            return
-
-        notional = abs(delta) * price
-        fee, slip = self._apply_costs(notional)
-
-        # For buys, ensure we have enough cash; scale down if needed
-        if delta > 0:
-            max_affordable = max(self.cash - fee - slip, 0.0)
-            max_qty = max_affordable / price
-            buy_qty = min(delta, max_qty)
-            if buy_qty <= 1e-12:
-                return
-            spend = buy_qty * price
-            self.cash -= (spend + fee + slip)
-            self.qty += buy_qty
-            side = "BUY"
-            fill_qty = buy_qty
+        if self.features is not None:
+            window = self.features[t0:t1]
         else:
-            sell_qty = min(-delta, self.qty)
-            if sell_qty <= 1e-12:
-                return
-            receive = sell_qty * price
-            self.cash += (receive - fee - slip)
-            self.qty -= sell_qty
-            side = "SELL"
-            fill_qty = -sell_qty
-
-        self.equity = self._mark_to_market(price)
-        i = min(self.t, len(self.open_time_ms) - 1)
-        open_time_ms = int(self.open_time_ms[i])
-        self.trades.append(
-            dict(
-                t=int(self.t),
-                open_time_ms=open_time_ms,
-                side=side,
-                qty=float(fill_qty),
-                price=float(price),
-                notional=float(abs(fill_qty) * price),
-                fee=float(fee),
-                slippage_cost=float(slip),
-                cash_after=float(self.cash),
-                qty_after=float(self.qty),
-                equity_after=float(self.equity),
-            )
-        )
-
-    def _execute_futures_to_target(self, target: float, price: float) -> None:
-        # target in {-1,0,+1}
-        target = float(target)
-
-        equity_now = self._mark_to_market(price)
-        notional = equity_now * self.cfg.futures_leverage * self.cfg.position_fraction
-        target_qty = (notional / price) * target  # signed
-
-        delta = target_qty - self.qty
-        if abs(delta) < 1e-12:
-            self.equity = equity_now
-            return
-
-        trade_notional = abs(delta) * price
-        fee, slip = self._apply_costs(trade_notional)
-
-        # Realize pnl if closing or flipping
-        realized_pnl = 0.0
-        if abs(self.qty) > 1e-12 and (target == 0.0 or np.sign(target) != np.sign(self.qty)):
-            realized_pnl = self.qty * (price - self.entry_price)
-            self.cash += realized_pnl
-            self.qty = 0.0
-            self.entry_price = 0.0
-
-        # Apply fees/slippage to collateral
-        self.cash -= (fee + slip)
-
-        # Open/resize position if target non-zero
-        if abs(target) > 1e-12:
-            # If currently flat, set entry
-            if abs(self.qty) < 1e-12:
-                self.qty = target_qty
-                self.entry_price = price
+            # fallback: use close-to-close log returns as 1D feature
+            closes = self.close[t0:t1]
+            if closes.size <= 1:
+                window = np.zeros((t1 - t0, 1), dtype=np.float64)
             else:
-                # same direction resize: update avg entry
-                new_qty = target_qty
-                if abs(new_qty) > 1e-12:
-                    # weighted average entry price approximation
-                    self.entry_price = (self.entry_price * abs(self.qty) + price * abs(delta)) / (
-                        abs(self.qty) + abs(delta)
-                    )
-                    self.qty = new_qty
+                r = np.diff(np.log(np.maximum(closes, 1e-12)), prepend=np.log(np.maximum(closes[0], 1e-12)))
+                window = r.reshape(-1, 1).astype(np.float64)
 
-        self.equity = self._mark_to_market(price)
-        side = "BUY" if delta > 0 else "SELL"
-        i = min(self.t, len(self.open_time_ms) - 1)
-        open_time_ms = int(self.open_time_ms[i])
-        self.trades.append(
-            dict(
-                t=int(self.t),
-                open_time_ms=open_time_ms,
-                side=side,
-                qty=float(delta),
-                price=float(price),
-                notional=float(trade_notional),
-                fee=float(fee),
-                slippage_cost=float(slip),
-                realized_pnl=float(realized_pnl),
-                cash_after=float(self.cash),
-                position_qty_after=float(self.qty),
-                entry_price_after=float(self.entry_price),
-                equity_after=float(self.equity),
-            )
-        )
+        # pad at the top if needed
+        if window.shape[0] < lb:
+            pad = np.zeros((lb - window.shape[0], window.shape[1]), dtype=np.float64)
+            window = np.vstack([pad, window])
 
-    def step(self, action: int):
+        return window.astype(np.float32, copy=False)
+
+    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         if self.done:
             raise RuntimeError("step() called after done=True. Call reset().")
 
@@ -309,35 +196,54 @@ class TradingEnv(gym.Env):
             elif action == 2:
                 target = 0.0
         else:
-            # 0 hold, 1 long, 2 flat, 3 short
+            # 0 hold, 1 long, 2 short, 3 flat
             if action == 1:
                 target = 1.0
             elif action == 2:
-                target = 0.0
-            elif action == 3:
                 target = -1.0
+            elif action == 3:
+                target = 0.0
 
         if target is not None:
             if mt == "spot":
-                self._execute_spot_to_target(target, price)
-            else:
-                self._execute_futures_to_target(target, price)
-        else:
-            self.equity = prev_equity
+                # target in [0..1] of equity allocated to asset
+                equity = self._mark_to_market(price)
+                desired_notional = float(target * equity)
+                current_notional = float(self.asset_qty * price)
+                delta_notional = desired_notional - current_notional
 
-        # Advance time
+                # buy/sell delta_notional worth
+                fee, slip = self._apply_fee_and_slip(delta_notional)
+                effective_delta = delta_notional - np.sign(delta_notional) * (fee + slip)
+
+                self.cash -= effective_delta
+                self.asset_qty += effective_delta / max(price, 1e-12)
+
+            else:
+                # futures target in [-1..1] fraction of equity as notional, scaled by leverage
+                equity = self._mark_to_market(price)
+                desired_notional = float(target * equity * self.cfg.futures_leverage)
+                current_notional = float(self.futures_pos * price)
+                delta_notional = desired_notional - current_notional
+
+                fee, slip = self._apply_fee_and_slip(delta_notional)
+
+                # Update position qty
+                self.futures_pos += (delta_notional / max(price, 1e-12))
+                if abs(self.futures_pos) < 1e-12:
+                    self.futures_pos = 0.0
+                    self.entry_price = 0.0
+                else:
+                    # if flipping or new pos, set entry to current price
+                    self.entry_price = float(price)
+
+                # fees/slip paid from collateral
+                self.cash -= float(fee + slip)
+
+        # advance time
         self.t += 1
         terminal = self.t >= self.cfg.end_index
-
-        # If terminal, force close and recompute equity
         if terminal:
-            final_price = float(self.close[self.cfg.end_index - 1])
-            if mt == "spot":
-                if self.qty > 1e-12:
-                    self._execute_spot_to_target(0.0, final_price)
-            else:
-                if abs(self.qty) > 1e-12:
-                    self._execute_futures_to_target(0.0, final_price)
             self.done = True
 
         curr_price = float(self.close[min(self.t, self.cfg.end_index - 1)])
@@ -351,6 +257,11 @@ class TradingEnv(gym.Env):
             reward = float(np.log(max(curr_equity, 1e-12) / max(prev_equity, 1e-12)))
 
         obs = self._get_obs() if not self.done else self._get_obs()
-        info = {"equity": float(curr_equity), "t": int(self.t), "fee_total": self.fee_total, "slippage_total": self.slip_total}
+        info = {
+            "equity": float(curr_equity),
+            "t": int(self.t),
+            "price": float(curr_price),
+            "fee_total": float(self.fee_total),
+            "slippage_total": float(self.slip_total),
+        }
         return obs, float(reward), self.done, False, info
-

@@ -9,18 +9,18 @@ from autonomous_rl_trading_bot.common.paths import ensure_artifact_tree
 from autonomous_rl_trading_bot.dashboard import create_app
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run the Dash dashboard.")
     p.add_argument("--mode", default=None, help="spot | futures (optional; config merge).")
     p.add_argument("--config", default="base.yaml", help="Base config name under configs/ (default base.yaml).")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8050)
     p.add_argument("--debug", action="store_true")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
-def main() -> int:
-    args = _parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
 
     ensure_artifact_tree()
 

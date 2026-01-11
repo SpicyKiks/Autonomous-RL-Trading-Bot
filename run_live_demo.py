@@ -24,7 +24,7 @@ def _make_run_id(mode: str, cfg_hash: str, symbol: str, interval: str) -> str:
     return f"{_utc_ts()}_{mode}_live_{tag}_{short_hash(cfg_hash, 10)}"
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Run live (paper) trading on CLOSED candles (Step 7)."
     )
@@ -52,7 +52,7 @@ def main() -> int:
         default=None,
         help="stop after N minutes wall-clock",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     ensure_artifact_tree()
 

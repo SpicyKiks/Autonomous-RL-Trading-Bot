@@ -1,0 +1,9 @@
+# Feature scaling configuration
+# Controls how features are scaled (leakage-safe: fit on train only)
+features:
+  scaling:
+    # Scaler type: "robust" (default, uses RobustScaler) or "standard" (StandardScaler)
+    kind: "robust"
+    
+    # Which split to fit scaler on (must be "train" to prevent leakage)
+    fit_on: "train"

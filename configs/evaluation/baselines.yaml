@@ -1,0 +1,14 @@
+# Baseline strategies configuration
+# Configures which baseline strategies to run
+evaluation:
+  baselines:
+    # List of strategies to run (all run on TEST split by default)
+    strategies:
+      - "buy_and_hold"
+      - "sma_crossover"
+      - "rsi_reversion"
+    
+    # Default parameters (can be overridden via CLI)
+    initial_cash: 1000.0
+    taker_fee_rate: 0.001
+    slippage_bps: 5

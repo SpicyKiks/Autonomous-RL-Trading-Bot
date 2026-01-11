@@ -1,0 +1,16 @@
+# Spot environment configuration
+# Used by SpotEnv for RL training and evaluation
+env:
+  spot:
+    # Observation window size (number of candles)
+    lookback: 64
+    
+    # Reward shaping: "log_return" (default) or "pnl"
+    reward_type: "log_return"
+    
+    # Termination safety thresholds
+    max_drawdown: 0.5      # Stop if drawdown exceeds 50%
+    min_equity: 1e-9        # Stop if equity drops below this
+    
+    # Optional: specify dataset_id to use (otherwise auto-selects latest)
+    # dataset_id: null

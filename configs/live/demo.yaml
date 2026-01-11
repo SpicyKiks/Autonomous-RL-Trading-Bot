@@ -1,0 +1,41 @@
+# Live (paper) trading demo configuration
+# Overrides for live trading runs
+live:
+  # Policy selection: "baseline" (uses strategy) or "sb3" (uses trained model)
+  policy: "baseline"
+  
+  # Baseline strategy (used when policy=baseline)
+  strategy: "buy_and_hold"
+  
+  # Optional strategy parameter overrides
+  strategy_params: {}
+  
+  # SB3 model settings (used when policy=sb3)
+  sb3_algo: "ppo"                  # ppo|dqn
+  sb3_model_path: ""               # Path to model.zip (required if policy=sb3)
+  
+  # Portfolio settings
+  initial_equity: 1000.0
+  position_fraction: 1.0           # Fraction of equity to use per position
+  
+  # Execution costs
+  fee_bps: 10.0                     # 10 bps = 0.1% fee
+  slippage_bps: 5.0                 # 5 bps slippage
+  
+  # Futures-specific (ignored for spot)
+  futures_leverage: 3.0
+  maintenance_margin_rate: 0.005
+  stop_on_liquidation: true
+  
+  # Observation window
+  lookback: 30
+  
+  # Candle polling
+  poll_seconds: 2.0                 # Poll interval for new candles
+  require_settled_ms: 250           # Wait 250ms after candle close before trading
+  
+  # Safeguards
+  kill_switch_path: "artifacts/KILL_SWITCH"  # Create this file to stop trading
+  max_drawdown: 0.25                # Stop if drawdown exceeds 25%
+  min_seconds_between_trades: 15.0  # Rate limiting
+  max_trades_per_hour: 30           # Maximum trades per hour

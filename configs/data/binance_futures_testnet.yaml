@@ -1,0 +1,12 @@
+# Binance Futures Testnet configuration
+# Overrides exchange settings for futures testnet usage
+exchange:
+  name: "binance"
+  demo: true
+  futures:
+    base_url_demo: "https://demo-fapi.binance.com"
+    base_url_live: "https://fapi.binance.com"
+  defaults:
+    symbol: "BTCUSDT"
+    interval: "1m"
+    limit: 1000

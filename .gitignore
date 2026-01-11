@@ -1,32 +1,32 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
-*.pyd
-*.so
-*.egg-info/
+.venv/
+venv/
+env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.ipynb_checkpoints/
 
-# Virtual env
-.venv/
-venv/
-
-# OS / Editor
+# IDE
 .vscode/
+.idea/
+
+# OS
 .DS_Store
 Thumbs.db
 
-# Secrets
-.env
+# Project artifacts
+artifacts/
+*.db
+*.sqlite
+*.sqlite3
 
-# Local artifacts (generated)
-artifacts/datasets/*
-artifacts/runs/*
-artifacts/models/*
-artifacts/reports/*
-artifacts/logs/*
-artifacts/db/*
+# Build
+build/
+dist/
+*.egg-info/
 
-# Keep the placeholder READMEs inside artifacts folders
-!artifacts/**/README.md
+# Logs
+*.log

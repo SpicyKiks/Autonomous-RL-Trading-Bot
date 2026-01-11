@@ -1,0 +1,27 @@
+# DQN (Deep Q-Network) training configuration
+# Hyperparameters for DQN algorithm
+training:
+  sb3:
+    dqn:
+      # Learning rate
+      learning_rate: 0.0001
+      
+      # Replay buffer
+      buffer_size: 100000            # Size of replay buffer
+      learning_starts: 1000          # Steps before learning starts
+      
+      # Training
+      batch_size: 64                 # Minibatch size
+      train_freq: 4                  # Train every N steps
+      gradient_steps: 1              # Gradient steps per update
+      
+      # Discount factor
+      gamma: 0.99
+      
+      # Target network update
+      target_update_interval: 1000   # Update target network every N steps
+      
+      # Exploration
+      exploration_fraction: 0.1      # Fraction of training for exploration
+      exploration_initial_eps: 1.0   # Initial epsilon
+      exploration_final_eps: 0.05    # Final epsilon

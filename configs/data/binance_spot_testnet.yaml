@@ -1,0 +1,12 @@
+# Binance Spot Testnet configuration
+# Overrides exchange settings for spot testnet usage
+exchange:
+  name: "binance"
+  demo: true
+  spot:
+    base_url_demo: "https://testnet.binance.vision"
+    base_url_live: "https://api.binance.com"
+  defaults:
+    symbol: "BTCUSDT"
+    interval: "1m"
+    limit: 1000

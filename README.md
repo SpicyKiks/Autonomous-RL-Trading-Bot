@@ -13,6 +13,28 @@ pytest
 python -c "import autonomous_rl_trading_bot; print(autonomous_rl_trading_bot.__version__)"
 ```
 
+## Unified CLI (one command)
+
+All operations available via a single entrypoint:
+
+```powershell
+# Dataset operations
+python -m autonomous_rl_trading_bot dataset fetch -- --config configs/base.yaml
+python -m autonomous_rl_trading_bot dataset build -- --config configs/base.yaml
+
+# Evaluation & training
+python -m autonomous_rl_trading_bot backtest -- --config configs/base.yaml
+python -m autonomous_rl_trading_bot train -- --config configs/base.yaml
+
+# Live trading & dashboard
+python -m autonomous_rl_trading_bot live -- --config configs/base.yaml
+python -m autonomous_rl_trading_bot dashboard -- --config configs/base.yaml
+```
+
+**Notes:**
+- `arbt` is an alias for `python -m autonomous_rl_trading_bot` (after `pip install -e .`)
+- Use `--` to forward arguments to underlying runners (e.g., `backtest -- --help`)
+
 ## Demo: Steps 3-5 (Quick Pipeline)
 
 Run these commands in sequence to build a dataset, train a model, and compare baselines:
@@ -62,3 +84,6 @@ python run_train.py --mode spot --train-split train --eval-split val --timesteps
 - Format: `python -m black .`
 - Lint: `python -m ruff check .`
 - Test: `pytest`
+
+## Dev tools
+- Create code-only zip: `python tools/make_code_zip.py` produces `code_only.zip` for sharing (excludes large data/artifacts).

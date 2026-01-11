@@ -1,0 +1,22 @@
+# PPO (Proximal Policy Optimization) training configuration
+# Hyperparameters for PPO algorithm
+training:
+  sb3:
+    ppo:
+      # Learning rate
+      learning_rate: 0.0003
+      
+      # PPO-specific parameters
+      n_steps: 2048                  # Steps per update
+      batch_size: 64                 # Minibatch size
+      n_epochs: 10                   # Number of epochs per update
+      
+      # Discount factor
+      gamma: 0.99
+      
+      # PPO clipping
+      clip_range: 0.2
+      
+      # Value function
+      vf_coef: 0.5
+      ent_coef: 0.01

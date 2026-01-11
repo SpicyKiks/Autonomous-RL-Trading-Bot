@@ -3,28 +3,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from autonomous_rl_trading_bot.broker.base_broker import BrokerAdapter
+
 
 @dataclass
 class LivePosition:
-    """Minimal position snapshot used by the live runner.
-
-    For spot: qty is base asset quantity (>=0).
-    For futures: qty is signed contracts quantity (can be <0 for short).
-    """
-
     qty: float
-    entry_price: float  # futures avg entry; for spot informational only
+    entry_price: float
 
 
 class PositionSync:
-    """Placeholder for broker/exchange position syncing.
+    """
+    Position sync helper.
 
-    In paper trading, the live runner is the source of truth and this class is a no-op.
-    In a real-money extension (e.g., via CCXT), this can poll open positions from the
-    exchange and reconcile state.
+    - Paper mode: runner is source of truth, uses set_local().
+    - Exchange mode: can poll broker each step using sync_from_broker().
     """
 
-    def __init__(self) -> None:
+    def __init__(self, broker: Optional[BrokerAdapter] = None, symbol: Optional[str] = None, market_type: str = "spot"):
+        self._broker = broker
+        self._symbol = symbol
+        self._market_type = market_type
         self._last: Optional[LivePosition] = None
 
     def set_local(self, pos: LivePosition) -> None:
@@ -33,3 +32,22 @@ class PositionSync:
     def get(self) -> Optional[LivePosition]:
         return self._last
 
+    def sync_from_broker(self) -> Optional[LivePosition]:
+        if self._broker is None or not self._symbol:
+            return None
+
+        positions = list(self._broker.get_open_positions(symbol=self._symbol))
+
+        if self._market_type == "spot":
+            # Spot returns base inventory as Position(symbol="BTC/USDT", qty=...)
+            p = positions[0] if positions else None
+            pos = LivePosition(qty=(p.qty if p else 0.0), entry_price=(p.entry_price if p else 0.0))
+        else:
+            p = positions[0] if positions else None
+            signed_qty = 0.0
+            if p:
+                signed_qty = p.qty if p.side == "buy" else -p.qty
+            pos = LivePosition(qty=signed_qty, entry_price=(p.entry_price if p else 0.0))
+
+        self._last = pos
+        return pos

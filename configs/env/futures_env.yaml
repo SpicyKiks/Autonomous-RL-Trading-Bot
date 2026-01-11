@@ -1,0 +1,16 @@
+# Futures environment configuration
+# Used by FuturesEnv for RL training and evaluation
+env:
+  futures:
+    # Observation window size (number of candles)
+    lookback: 64
+    
+    # Reward shaping: "log_return" (default) or "pnl"
+    reward_type: "log_return"
+    
+    # Termination safety thresholds
+    max_drawdown: 0.999     # Very high threshold (liquidation is main terminal event)
+    min_equity: 1e-9        # Stop if equity drops below this
+    
+    # Optional: specify dataset_id to use (otherwise auto-selects latest)
+    # dataset_id: null

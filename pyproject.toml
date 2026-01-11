@@ -23,6 +23,7 @@ dependencies = [
   "dash>=2.17",
   "ccxt>=4.3.0",
   "scikit-learn>=1.3.0",
+  "reportlab>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +32,9 @@ dev = [
   "ruff>=0.6.0",
   "black>=24.8.0",
 ]
+
+[project.scripts]
+arbt = "autonomous_rl_trading_bot.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
