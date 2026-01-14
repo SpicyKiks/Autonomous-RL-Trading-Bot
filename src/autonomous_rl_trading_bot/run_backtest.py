@@ -52,7 +52,7 @@ def _find_latest_dataset_id(*, mode: str) -> str:
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="arbt backtest", description="Run backtest evaluation (baseline + reporting artifacts).")
     parser.add_argument("--mode", choices=["spot", "futures"], required=True)
-    parser.add_argument("--policy", default="baseline", help="Policy/strategy name (default: baseline)")
+    parser.add_argument("--policy", default=None, help="Path to SB3 policy.zip file, or baseline strategy name (default: baseline). If path ends with .zip, loads SB3 model.")
     parser.add_argument("--dataset-id", default=None, help="Dataset id under artifacts/datasets/. If omitted, auto-select latest.")
     parser.add_argument("--run-id", default=None, help="Optional explicit run id. If omitted, generated.")
     args = parser.parse_args(argv)
@@ -73,37 +73,57 @@ def main(argv: Optional[list[str]] = None) -> int:
     logger.info("Backtest starting")
     logger.info(f"run_id={run_id} market_type={args.mode} dataset_id={dataset_id} policy={args.policy}")
 
-    # Build cfg in the exact structure expected by evaluation.backtest_runner (unit-tested).
-    cfg: Dict[str, Any] = {
-        "mode": {"id": args.mode},
-        "run": {"seed": 1337},
-        "logging": {"level": "INFO", "console": True},
-        "db": {"path": str(artifacts / "db" / "bot.db")},
-        "data": {"dataset": {"symbol": "BTCUSDT", "interval": "1m"}},
-        "evaluation": {
-            "backtest": {
-                "dataset_id": dataset_id,
-                "strategy": "buy_and_hold" if args.policy == "baseline" else str(args.policy),
-                "strategies": {},
-                "initial_cash": 1000.0,
-                "order_size_quote": 0.0,
-                "taker_fee_rate": 0.001,
-                "slippage_bps": 0.0,
-            }
-        },
-    }
-
-    # Persist the effective run input (Step 12 reproducibility / V&V evidence)
-    safe_json_dump(run_dir / "run_input.json", cfg)
+    # Determine policy argument: if --policy is a .zip file path, use it; otherwise treat as strategy name
+    policy_arg = args.policy
+    if policy_arg is None:
+        policy_arg = "baseline"
+    
+    # Check if policy is a file path (ends with .zip)
+    policy_path = None
+    if policy_arg and policy_arg.endswith(".zip"):
+        # Normalize path separators (handle Windows backslashes)
+        policy_arg_normalized = policy_arg.replace("\\", "/")
+        policy_path = Path(policy_arg_normalized)
+        
+        # If not absolute, try multiple locations
+        if not policy_path.is_absolute():
+            # Try relative to repo root first
+            policy_path = _repo_root() / policy_arg_normalized
+            if not policy_path.exists():
+                # Try relative to current working directory
+                policy_path = Path(policy_arg_normalized).resolve()
+            if not policy_path.exists():
+                # Try with original path (in case it's already relative to cwd)
+                policy_path = Path(policy_arg).resolve()
+        else:
+            # Absolute path - just resolve it
+            policy_path = policy_path.resolve()
+            
+        # If policy.zip doesn't exist, check for model.zip or best_model.zip in the same directory
+        if not policy_path.exists():
+            policy_dir = policy_path.parent
+            policy_name = policy_path.name
+            # Try model.zip or best_model.zip as fallback
+            for alt_name in ["model.zip", "best_model.zip"]:
+                alt_path = policy_dir / alt_name
+                if alt_path.exists():
+                    logger.info(f"Policy file {policy_path.name} not found, using {alt_name} instead")
+                    policy_path = alt_path
+                    break
+            
+        if not policy_path.exists():
+            raise FileNotFoundError(f"Policy file not found: {policy_arg} (resolved to: {policy_path})")
+        policy_arg = str(policy_path)
 
     try:
         from autonomous_rl_trading_bot.evaluation.backtest_runner import run_backtest
 
         payload = run_backtest(
-            cfg=cfg,
-            artifacts_base_dir=artifacts,
-            dataset_dir=dataset_dir,
+            mode=args.mode,
+            dataset_id=dataset_id,
             run_id=run_id,
+            policy=policy_arg if policy_arg != "baseline" else None,
+            cfg=None,  # Let backtest_runner load cfg from dataset meta
         )
 
         # Mirror generated artifacts into run_dir for easy marking evidence

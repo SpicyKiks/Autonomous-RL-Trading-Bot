@@ -1,0 +1,186 @@
+# Autonomous RL Trading Bot - AI Assistant Context
+
+## CRITICAL INSTRUCTION: FILE CREATION POLICY
+**DO NOT CREATE NEW FILES UNLESS EXPLICITLY REQUESTED BY THE USER.**
+- Only edit existing files when asked
+- Only create files when the user explicitly asks you to create them
+- If unsure, ask before creating any new files
+- This includes documentation files, test files, config files, scripts, etc.
+
+## Project Overview
+This is an **Autonomous Reinforcement Learning Trading Bot** that supports both spot and futures trading on Binance. The system includes:
+- Data fetching and dataset building with leakage-free train/val/test splits
+- RL model training (PPO, DQN via Stable-Baselines3)
+- Backtesting with baseline strategies (buy-and-hold, SMA/EMA crossover, RSI reversion)
+- Live trading with safeguards and risk management
+- Research-grade reporting artifacts (HTML/PDF reports, equity curves, reproducibility JSON)
+
+## Project Structure
+
+```
+src/autonomous_rl_trading_bot/
+├── broker/          # Broker adapters (spot_broker.py, futures_broker.py, execution.py)
+├── common/           # Shared utilities (config, types, hashing, reproducibility)
+├── data/             # Data fetching (binance_spot.py, binance_futures.py, dataset_builder.py)
+├── envs/             # Gymnasium environments (spot_env.py, futures_env.py, base_env.py)
+├── evaluation/       # Backtesting, baselines, reporting, plots
+├── features/         # Feature engineering (alignment.py, indicators.py, scaling.py, pipeline)
+├── live/             # Live trading runner, safeguards, candle sync
+├── modes/            # Mode registry (spot/futures configuration)
+├── rl/               # RL environment wrapper (env_trading.py)
+├── risk/             # Risk management (spot_risk.py, futures_risk.py)
+├── storage/          # Database storage (sqlite_store.py, parquet_store.py, models.py)
+├── training/         # RL training (trainer.py)
+└── cli.py            # Unified CLI entrypoint
+
+configs/              # YAML configuration files (base.yaml + overrides)
+sql/                  # Database schema and migrations
+tests/                # Unit tests
+tools/                # Utility scripts (make_code_zip.py)
+```
+
+## Key Concepts
+
+### 1. Modes (Spot vs Futures)
+- **Mode Registry**: `modes/registry.py` - Maps "spot" or "futures" to mode definitions
+- **Mode Definition**: Contains factories for creating market data clients, brokers, risk managers, environments
+- **Runtime Config**: Extracted from YAML configs, validated per mode
+
+### 2. Configuration System
+- **Base Config**: `configs/base.yaml` - Default settings
+- **Override Configs**: Mode-specific YAMLs that merge with base.yaml
+- **Config Loading**: `common/config.py` - Uses `_get()` helper with dot notation (e.g., `cfg.get("exchange.name")`)
+- **Config Hash**: Deterministic hash for reproducibility
+
+### 3. Data Pipeline
+- **Fetch**: `data/binance_spot.py` / `binance_futures.py` - Fetch OHLCV candles via CCXT
+- **Dataset Builder**: `data/dataset_builder.py` - Builds datasets with:
+  - Leakage-free splits (train/val/test by time, default 75/10/15)
+  - Feature engineering (returns, indicators)
+  - Scaling (robust scaler, fit on train only)
+  - Metadata (dataset_id, hash, splits info)
+- **Storage**: SQLite for candles, Parquet for datasets
+
+### 4. Environments
+- **SpotEnv**: `envs/spot_env.py` - Actions: HOLD, BUY, SELL, CLOSE
+- **FuturesEnv**: `envs/futures_env.py` - Actions: HOLD, LONG, SHORT, REDUCE, CLOSE
+- **Base**: `envs/base_env.py` - Common functionality (drawdown calculation, window views)
+- **RL Wrapper**: `rl/env_trading.py` - Gymnasium-compatible wrapper for SB3
+
+### 5. Brokers
+- **BrokerAdapter**: Abstract base class in `broker/base_broker.py`
+- **SpotBroker**: `broker/spot_broker.py` - CCXT-based spot broker (requires ALLOW_NETWORK=1 for live)
+- **FuturesBroker**: `broker/futures_broker.py` - CCXT-based futures broker
+- **Execution**: `broker/execution.py` - Helper functions for order sizing, position fraction → OrderRequest
+
+### 6. Features
+- **Alignment**: `features/alignment.py` - `asof_align()` / `asof_align_many()` for lookahead-free alignment
+- **Indicators**: `features/indicators.py` - returns, log_returns, SMA, EMA, RSI, zscore, clip
+- **Scaling**: `features/scaling.py` - Leakage-safe scaler persistence (fit on train, transform on val/test)
+- **Pipeline**: `features/feature_pipeline.py` - Deterministic feature matrix from candles
+- **Store**: `features/feature_store.py` - Save/load features to disk
+
+### 7. Evaluation & Reporting
+- **Backtest Runner**: `evaluation/backtest_runner.py` - Runs backtests, generates reports
+- **Baselines**: `evaluation/baselines.py` - Baseline strategies (buy_and_hold, sma_crossover, ema_crossover, rsi_reversion)
+- **Plots**: `evaluation/plots.py` - `plot_equity_curve()`, `plot_drawdown()`
+- **Reporting**: `evaluation/reporting.py` - Generates HTML/PDF reports, metrics.md, repro.json
+- **Artifacts**: Each run produces:
+  - `equity_curve.png`, `drawdown.png`
+  - `metrics.md`, `report.html`, `report.pdf`
+  - `repro.json` (seed, dataset_id, dataset_hash, config_hash)
+
+### 8. Training
+- **Trainer**: `training/trainer.py` - Trains SB3 models (PPO/DQN), evaluates on val split
+- **Outputs**: Model checkpoints, eval metrics, same reporting artifacts as backtest
+
+### 9. Live Trading
+- **Live Runner**: `live/live_runner.py` - Main loop: poll candles, run policy, execute trades
+- **Safeguards**: `live/safeguards.py` - Rate limiting, drawdown kill switch, slippage checks
+  - Rate limits: `min_seconds_between_trades`, `max_trades_per_hour`, `max_orders_per_minute`
+  - Usage resets via rolling windows (old timestamps filtered out automatically)
+- **Candle Sync**: `live/candle_sync.py` - Synchronizes live candles with database
+
+### 10. Storage
+- **SQLite Store**: `storage/sqlite_store.py` - Runs, backtests, train_jobs tables
+- **Models**: `storage/models.py` - Dataclasses (RunModel, BacktestModel, TrainJobModel)
+- **Parquet Store**: `storage/parquet_store.py` - Optional helpers for Parquet I/O
+
+### 11. CLI
+- **Unified CLI**: `cli.py` - Single entrypoint: `python -m autonomous_rl_trading_bot <command>`
+- **Commands**: `dataset fetch`, `dataset build`, `backtest`, `train`, `live`, `dashboard`
+- **Argument Forwarding**: Uses `--` to forward args to underlying runners
+- **Help Handling**: Special logic to show subcommand help correctly
+
+## Important Patterns
+
+### 1. Lazy Imports
+- Heavy dependencies (ccxt, gymnasium) are imported lazily to avoid import-time side effects
+- See `data/__init__.py` and `rl/__init__.py` for examples
+
+### 2. Deterministic Reproducibility
+- `common/reproducibility.py` - `set_global_seed()` sets seeds for numpy, random, torch
+- `common/hashing.py` - `sha256_of_file()`, `dataset_hash()` for deterministic hashing
+- All runs include `repro.json` with seed, dataset_id, dataset_hash, config_hash
+
+### 3. Configuration Merging
+- YAML configs merge hierarchically (override files extend base.yaml)
+- Use `_get()` helper with dot notation: `cfg.get("exchange.name")`
+- Configs are validated per mode via `ModeDefinition.validate_config`
+
+### 4. Type Safety
+- `common/types.py` - Common types (MarketType, OrderRequest, OrderAck, etc.)
+- Dataclasses used extensively for configuration and data models
+
+### 5. Error Handling
+- `common/exceptions.py` - Custom exceptions (ConfigError, etc.)
+- Network calls require `ALLOW_NETWORK=1` env var (safety check)
+
+### 6. Testing
+- Tests in `tests/` directory
+- Fast unit tests (no network, no large data)
+- Use `pytest` to run tests
+
+## Common Tasks
+
+### Adding a New Feature
+1. Add implementation to appropriate module
+2. Export from `__init__.py` if needed
+3. Add tests if applicable
+4. Update configs if needed
+
+### Modifying Configuration
+1. Edit YAML files in `configs/`
+2. Ensure keys match how code reads config (search for `cfg.get()` usage)
+3. Test config loading: `python -c "from autonomous_rl_trading_bot.common.config import load_config; print(load_config([]).hash)"`
+
+### Adding a New Baseline Strategy
+1. Implement strategy class in `evaluation/baselines.py` (inherit from `BaselineStrategy`)
+2. Add config defaults in `configs/base.yaml` under `evaluation.backtest.strategies`
+3. Register in `BaselineRunner._make_strategy()`
+
+### Debugging
+- Check logs in `artifacts/logs/`
+- Use `pytest -q` to run tests
+- Use `python tools/make_code_zip.py` to create distributable zip
+
+## Code Style
+- Python 3.11+ (type hints, dataclasses)
+- Black formatting (line length 100)
+- Ruff linting (E, F, I, B rules)
+- Docstrings for public functions/classes
+
+## Dependencies
+- Core: numpy, pandas, pyarrow, PyYAML
+- RL: gymnasium, stable-baselines3
+- Trading: ccxt
+- ML: scikit-learn
+- Visualization: matplotlib, plotly, dash
+- Reporting: reportlab (optional, graceful fallback)
+
+## Important Notes
+- **No network calls at import time** - All network code is lazy-loaded
+- **Deterministic by default** - Seeds set, hashing for reproducibility
+- **Leakage-free splits** - Train/val/test split by time, features fit on train only
+- **Safety first** - Live trading requires explicit `ALLOW_NETWORK=1` env var
+- **Rolling windows** - Rate limiting uses rolling windows (auto-reset as time passes)

@@ -5,6 +5,8 @@ from dataclasses import dataclass, fields as dc_fields
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
+
 from autonomous_rl_trading_bot.common.fs import ensure_dir, write_json
 from autonomous_rl_trading_bot.common.hashing import dataset_hash
 from autonomous_rl_trading_bot.common.logging import get_logger
@@ -23,6 +25,18 @@ def _asdict_dataclass(obj: Any) -> Dict[str, Any]:
     if not hasattr(obj, "__dataclass_fields__"):
         raise TypeError("Expected a dataclass instance")
     return {f.name: getattr(obj, f.name) for f in dc_fields(obj)}
+
+
+def _json_serialize_paths(obj: Any) -> Any:
+    """Recursively convert Path objects to strings for JSON serialization."""
+    if isinstance(obj, Path):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {k: _json_serialize_paths(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_json_serialize_paths(item) for item in obj]
+    else:
+        return obj
 
 
 # =========================
@@ -258,8 +272,8 @@ def train_and_evaluate(
     env_cfg = _make_env_config(cfg)
 
     # --- build envs ---
-    train_env = TradingEnv(train_ds, env_cfg)
-    eval_env = TradingEnv(eval_ds, env_cfg)
+    train_env = TradingEnv(train_ds.data, env_cfg)
+    eval_env = TradingEnv(eval_ds.data, env_cfg)
 
     # --- model ---
     AlgoCls = _make_algo(cfg.algo)
@@ -274,6 +288,11 @@ def train_and_evaluate(
     # --- fit ---
     model.learn(total_timesteps=int(cfg.timesteps))
 
+    # --- save model ---
+    policy_path = run_dir / "policy.zip"
+    model.save(str(policy_path))
+    logger.info(f"Saved trained model to: {policy_path}")
+
     # --- eval ---
     all_episode_infos: list[Dict[str, Any]] = []
     for _ in range(int(cfg.eval_episodes)):
@@ -286,28 +305,102 @@ def train_and_evaluate(
             if isinstance(info, dict):
                 all_episode_infos.append(info)
 
-    metrics = compute_metrics(all_episode_infos)
+    # Extract data for compute_metrics
+    if not all_episode_infos:
+        raise ValueError("No episode info collected during evaluation")
+    
+    # Get timestamps from dataset (use indices from info['t'] to map to open_time_ms)
+    open_time_ms_array = eval_ds.data.get("open_time_ms")
+    if open_time_ms_array is None:
+        # Fallback: generate timestamps from step indices
+        # Assume 1-minute intervals if not available
+        interval_ms_fallback = 60_000  # 1 minute default
+        start_time = 0
+        open_time_ms_list = [start_time + i * interval_ms_fallback for i in range(len(all_episode_infos))]
+    else:
+        # Convert numpy array to list and map info['t'] indices to actual timestamps
+        if isinstance(open_time_ms_array, np.ndarray):
+            open_time_ms_array = open_time_ms_array.tolist()
+        open_time_ms_list = []
+        for info in all_episode_infos:
+            t_idx = int(info.get("t", 0))
+            if t_idx < len(open_time_ms_array):
+                open_time_ms_list.append(int(open_time_ms_array[t_idx]))
+            else:
+                open_time_ms_list.append(int(open_time_ms_array[-1]) if open_time_ms_array else 0)
+    
+    equity_list = [float(info.get("equity", 0.0)) for info in all_episode_infos]
+    
+    # Calculate drawdown
+    peak_equity = equity_list[0] if equity_list else 1.0
+    drawdown_list: list[float] = []
+    for eq in equity_list:
+        peak_equity = max(peak_equity, eq)
+        dd = max(0.0, 1.0 - (eq / peak_equity)) if peak_equity > 0 else 0.0
+        drawdown_list.append(dd)
+    
+    # Get fee_total and slippage_total from last info
+    last_info = all_episode_infos[-1] if all_episode_infos else {}
+    fee_total = float(last_info.get("fee_total", 0.0))
+    slippage_total = float(last_info.get("slippage_total", 0.0))
+    
+    # Get interval_ms from dataset meta
+    interval_ms = int(eval_ds.meta.get("interval_ms", 60_000))  # Default 1 minute
+    
+    # Count trades (approximate: count non-zero position changes)
+    # For now, set to 0 since we don't track explicit trades in TradingEnv
+    trade_count = 0
+    
+    metrics = compute_metrics(
+        open_time_ms=open_time_ms_list,
+        equity=equity_list,
+        drawdown=drawdown_list,
+        trade_count=trade_count,
+        fee_total=fee_total,
+        slippage_total=slippage_total,
+        interval_ms=interval_ms,
+        trades=None,
+        exposure=None,
+        seed=cfg.seed,
+    )
 
     # --- repro payload ---
     repro = build_repro_payload(
-        train_config=_asdict_dataclass(cfg),
-        dataset={"dataset_id": cfg.dataset_id, "dataset_hash": ds_hash},
-        metrics=metrics,
+        config=_asdict_dataclass(cfg),
+        extra={
+            "dataset_id": cfg.dataset_id,
+            "dataset_hash": ds_hash,
+            "metrics": metrics.to_dict() if hasattr(metrics, "to_dict") else metrics,
+        },
     )
 
     # --- write artifacts ---
-    write_json(run_dir / "config.json", _asdict_dataclass(cfg))
+    cfg_dict = _asdict_dataclass(cfg)
+    write_json(run_dir / "config.json", _json_serialize_paths(cfg_dict))
     write_json(run_dir / "dataset.json", {"dataset_id": cfg.dataset_id, "dataset_hash": ds_hash})
-    write_json(run_dir / "metrics.json", metrics)
-    write_json(run_dir / "repro.json", repro)
+    write_json(run_dir / "metrics.json", metrics.to_dict() if hasattr(metrics, "to_dict") else metrics)
+    write_json(run_dir / "repro.json", _json_serialize_paths(repro))
 
-    report_path = generate_run_report(
+    # Convert episode infos to equity_rows format for reporting
+    equity_rows = [
+        {
+            "open_time_ms": ts,
+            "equity": eq,
+            "drawdown": dd,
+        }
+        for ts, eq, dd in zip(open_time_ms_list, equity_list, drawdown_list)
+    ]
+    
+    # Empty trades list (TradingEnv doesn't track explicit trades)
+    trades_rows: list[Dict[str, Any]] = []
+    
+    report_artifacts = generate_run_report(
         out_dir=run_dir,
-        run_name=run_name,
-        train_config=_asdict_dataclass(cfg),
-        dataset={"dataset_id": cfg.dataset_id, "dataset_hash": ds_hash},
-        metrics=metrics,
-        repro=repro,
+        title=f"Training Run: {run_name}",
+        equity_rows=equity_rows,
+        trades_rows=trades_rows,
+        metrics=metrics.to_dict() if hasattr(metrics, "to_dict") else metrics,
+        repro=_json_serialize_paths(repro),
     )
 
     payload: Dict[str, Any] = {
@@ -315,7 +408,7 @@ def train_and_evaluate(
         "run_dir": str(run_dir),
         "dataset_id": cfg.dataset_id,
         "dataset_hash": ds_hash,
-        "metrics": metrics,
-        "report_path": str(report_path) if report_path is not None else None,
+        "metrics": metrics.to_dict() if hasattr(metrics, "to_dict") else metrics,
+        "report_path": str(report_artifacts.get("report_html", "")) if report_artifacts else None,
     }
     return payload

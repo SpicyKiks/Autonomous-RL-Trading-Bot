@@ -1,271 +1,369 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
-from autonomous_rl_trading_bot.common.db import apply_migrations, ensure_schema_migrations
-from autonomous_rl_trading_bot.common.paths import ensure_dir, repo_root
-from autonomous_rl_trading_bot.common.reproducibility import set_global_seed
-from autonomous_rl_trading_bot.evaluation.baselines import make_strategy
+import numpy as np
+
+from autonomous_rl_trading_bot.common.logging import get_logger
+from autonomous_rl_trading_bot.common.paths import artifacts_dir
 from autonomous_rl_trading_bot.evaluation.backtester import (
     BacktestConfig,
-    load_dataset,
-    persist_backtest_to_db,
     run_futures_backtest,
     run_spot_backtest,
 )
-from autonomous_rl_trading_bot.evaluation.reporting import build_repro_payload, generate_run_report, write_json
+from autonomous_rl_trading_bot.evaluation.baselines import Strategy, make_strategy
+
+log = get_logger("arbt")
 
 
-def _iso_utc_now() -> str:
+# ─────────────────────────────────────────────────────────────
+# Small utilities
+# ─────────────────────────────────────────────────────────────
+def _utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    import csv
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not rows:
-        path.write_text("", encoding="utf-8")
-        return
-
-    pref = [
-        "t",
-        "step",
-        "open_time_ms",
-        "equity",
-        "price",
-        "cash",
-        "qty_base",
-        "drawdown",
-        "exposure",
-        "side",
-        "notional",
-        "fee",
-        "slippage_cost",
-        "pnl",
-        "realized_pnl",
-    ]
-    keys: list[str] = []
-    for k in pref:
-        if k in rows[0] and k not in keys:
-            keys.append(k)
-    for k in rows[0].keys():
-        if k not in keys:
-            keys.append(k)
-
-    with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=keys)
-        w.writeheader()
-        for r in rows:
-            w.writerow(r)
+def _new_backtest_run_id(mode: str) -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    day = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return f"run_backtest_{mode}_{ts}_{day}"
 
 
-def _ensure_run_row(
-    conn: sqlite3.Connection,
-    *,
-    run_id: str,
-    kind: str,
-    mode: str,
-    created_utc: str,
-    seed: int,
-    status: str,
-    run_dir: str,
-    run_json_path: str,
-    run_log_path: str | None = None,
-    global_log_path: str | None = None,
-    config_hash: str,
-) -> None:
+def _resolve_run_dir(run_id: str) -> Path:
+    return artifacts_dir() / "runs" / run_id
+
+
+def _write_json(path: Path, obj: Any) -> None:
+    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _write_error(path: Path, exc: BaseException) -> None:
+    path.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+
+
+# ─────────────────────────────────────────────────────────────
+# Dataset discovery (robust, no assumptions)
+# ─────────────────────────────────────────────────────────────
+def _dataset_root_for_id(dataset_id: str) -> Path:
+    # Try artifacts/datasets first (standard location), then artifacts/runs (legacy)
+    root = artifacts_dir() / "datasets" / dataset_id
+    if root.exists():
+        return root
+    root = artifacts_dir() / "runs" / dataset_id
+    if root.exists():
+        return root
+    raise FileNotFoundError(f"Dataset root not found for dataset_id={dataset_id}. Checked: {artifacts_dir() / 'datasets' / dataset_id} and {artifacts_dir() / 'runs' / dataset_id}")
+
+
+def _find_dataset_files(root: Path) -> Tuple[Path, Path]:
     """
-    Inserts a runs row satisfying NOT NULL constraints.
-    Uses INSERT OR REPLACE to be idempotent for unit tests.
+    Search recursively under <root> for meta.json + dataset.npz.
+    Returns (meta_path, npz_path).
+
+    This avoids breaking if your dataset writer stores files in subfolders.
     """
-    conn.execute(
-        """
-        INSERT OR REPLACE INTO runs(
-          run_id, kind, mode, created_utc, config_hash, seed, status,
-          run_dir, run_json_path, run_log_path, global_log_path
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """,
-        (
-            run_id,
-            kind,
-            mode,
-            created_utc,
-            config_hash,
-            int(seed),
-            status,
-            run_dir,
-            run_json_path,
-            run_log_path,
-            global_log_path,
-        ),
+    meta = root / "meta.json"
+    npz = root / "dataset.npz"
+    if meta.exists() and npz.exists():
+        return meta, npz
+
+    metas = list(root.rglob("meta.json"))
+    npzs = list(root.rglob("dataset.npz"))
+
+    if not metas or not npzs:
+        raise FileNotFoundError(
+            "Could not find required dataset files under dataset_id directory.\n"
+            f"Looked under: {root}\n"
+            f"Found meta.json: {len(metas)} | Found dataset.npz: {len(npzs)}"
+        )
+
+    # Prefer pairs that live in the same folder
+    npz_by_parent = {p.parent: p for p in npzs}
+    for m in metas:
+        if m.parent in npz_by_parent:
+            return m, npz_by_parent[m.parent]
+
+    # Otherwise pick the closest-ish pair
+    best = None
+    best_score = None
+    for m in metas:
+        for z in npzs:
+            score = abs(len(str(m.parent)) - len(str(z.parent)))
+            if best_score is None or score < best_score:
+                best_score = score
+                best = (m, z)
+
+    assert best is not None
+    return best
+
+
+def _load_dataset_from_id(dataset_id: str) -> Tuple[Dict[str, Any], Dict[str, np.ndarray]]:
+    root = _dataset_root_for_id(dataset_id)
+    meta_path, npz_path = _find_dataset_files(root)
+
+    dataset_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    arrays_npz = np.load(npz_path, allow_pickle=False)
+    arrays: Dict[str, np.ndarray] = {k: arrays_npz[k] for k in arrays_npz.files}
+
+    dataset_meta = dict(dataset_meta)
+    dataset_meta["_dataset_root"] = str(root)
+    dataset_meta["_meta_path"] = str(meta_path)
+    dataset_meta["_npz_path"] = str(npz_path)
+    dataset_meta["dataset_id"] = dataset_id
+    return dataset_meta, arrays
+
+
+# ─────────────────────────────────────────────────────────────
+# Config override handling (keeps CLI compatibility)
+# ─────────────────────────────────────────────────────────────
+def _cfg_from_meta(dataset_meta: Mapping[str, Any]) -> BacktestConfig:
+    return BacktestConfig(
+        initial_cash=float(dataset_meta.get("initial_cash", 10_000.0)),
+        order_size_quote=float(dataset_meta.get("order_size_quote", 0.0)),
+        taker_fee_rate=float(dataset_meta.get("taker_fee_rate", 0.0004)),
+        slippage_bps=float(dataset_meta.get("slippage_bps", 0.0)),
+        leverage=float(dataset_meta.get("leverage", 1.0)),
+        maintenance_margin_rate=float(dataset_meta.get("maintenance_margin_rate", 0.005)),
+        allow_short=bool(dataset_meta.get("allow_short", True)),
+        stop_on_liquidation=bool(dataset_meta.get("stop_on_liquidation", True)),
     )
 
 
+def _apply_cfg_override(base: BacktestConfig, override: Any) -> BacktestConfig:
+    """
+    override can be:
+      - None
+      - BacktestConfig
+      - dict-like with BacktestConfig field names
+    Anything else is ignored (but logged).
+    """
+    if override is None:
+        return base
+
+    if isinstance(override, BacktestConfig):
+        return override
+
+    if isinstance(override, Mapping):
+        allowed = set(asdict(base).keys())
+        patch = {k: override[k] for k in override.keys() if k in allowed}
+        if not patch:
+            return base
+        # dataclasses.replace keeps types/fields safe
+        return replace(base, **patch)
+
+    log.warning(f"Ignoring unsupported cfg override type: {type(override)}")
+    return base
+
+
+# ─────────────────────────────────────────────────────────────
+# SB3 policy loader + wrapper Strategy
+# ─────────────────────────────────────────────────────────────
+def _try_load_sb3_model(policy_path: Path):
+    from stable_baselines3 import A2C, DQN, PPO, SAC, TD3  # type: ignore
+
+    errors: List[str] = []
+    for cls in (PPO, A2C, DQN, SAC, TD3):
+        try:
+            return cls.load(str(policy_path))
+        except Exception as e:
+            errors.append(f"{cls.__name__}: {e}")
+    raise ValueError(
+        "Failed to load SB3 policy.zip with PPO/A2C/DQN/SAC/TD3.\n" + "\n".join(errors)
+    )
+
+
+def _build_obs_matrix(arrays: Mapping[str, np.ndarray]) -> np.ndarray:
+    if "obs" in arrays:
+        obs = np.asarray(arrays["obs"])
+    elif "features" in arrays:
+        obs = np.asarray(arrays["features"])
+    elif "x" in arrays:
+        obs = np.asarray(arrays["x"])
+    else:
+        if "close" not in arrays:
+            raise KeyError(
+                "Cannot build observations: none of ['obs','features','x'] exist and 'close' missing too."
+            )
+        close = np.asarray(arrays["close"], dtype=np.float32)
+        obs = close.reshape(-1, 1)
+
+    if obs.ndim == 1:
+        obs = obs.reshape(-1, 1)
+    return obs.astype(np.float32, copy=False)
+
+
+class SB3PolicyStrategy(Strategy):
+    def __init__(self, model: Any, obs_matrix: np.ndarray):
+        self._model = model
+        self._obs = obs_matrix
+
+    def act(self, t: int, price: float) -> int:
+        if t < 0:
+            t = 0
+        if t >= len(self._obs):
+            t = len(self._obs) - 1
+
+        obs_in = np.asarray(self._obs[t], dtype=np.float32).reshape(1, -1)
+        action, _ = self._model.predict(obs_in, deterministic=True)
+
+        a = action
+        if isinstance(a, np.ndarray):
+            a = a.reshape(-1)[0] if a.size else 0
+
+        # Discrete actions (expected)
+        try:
+            ai = int(a)
+            if 0 <= ai <= 3:
+                return ai
+        except Exception:
+            pass
+
+        # Continuous fallback
+        try:
+            af = float(a)
+        except Exception:
+            return 0
+        if af > 0.33:
+            return 1
+        if af < -0.33:
+            return 2
+        return 0
+
+
+# ─────────────────────────────────────────────────────────────
+# Public API
+# ─────────────────────────────────────────────────────────────
 def run_backtest(
     *,
-    cfg: Dict[str, Any],
-    artifacts_base_dir: Path,
-    dataset_dir: Path,
-    run_id: str,
+    mode: str,
+    dataset_id: str,
+    run_id: Optional[str] = None,
+    policy: Optional[str] = None,
+    strategies_cfg: Optional[Mapping[str, Any]] = None,
+    cfg: Optional[Union[BacktestConfig, Mapping[str, Any]]] = None,
+    **_ignored: Any,  # swallow extra kwargs from CLI to prevent future crashes
 ) -> Dict[str, Any]:
-    """
-    Backwards-compatible backtest entrypoint required by existing unit tests.
+    mode = str(mode).lower().strip()
+    if mode not in ("spot", "futures"):
+        raise ValueError(f"mode must be 'spot' or 'futures', got: {mode}")
 
-    Writes required artifacts under:
-      <artifacts_base_dir>/backtests/<run_id>/
+    if not dataset_id:
+        raise ValueError("dataset_id is required")
 
-    Also writes Step 11/12 reporting artifacts in the SAME directory:
-      metrics.md, metrics.json, repro.json, report.html, report.pdf, plots, etc.
+    resolved_run_id = run_id or _new_backtest_run_id(mode)
+    out_dir = _resolve_run_dir(resolved_run_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    Persists into SQLite and guarantees FK integrity by inserting a valid runs row
-    (config_hash is NOT NULL in schema).
-    """
-    artifacts_base_dir = Path(artifacts_base_dir)
-    dataset_dir = Path(dataset_dir)
+    started_utc = _utc_iso()
 
-    mode = str(cfg["mode"]["id"]).strip().lower()
-    seed = int(cfg["run"]["seed"])
-    set_global_seed(seed)
+    try:
+        dataset_meta, arrays = _load_dataset_from_id(dataset_id)
 
-    dataset_meta, arrays = load_dataset(dataset_dir)
+        # cfg from meta, then override from CLI if provided
+        cfg_obj = _cfg_from_meta(dataset_meta)
+        cfg_obj = _apply_cfg_override(cfg_obj, cfg)
 
-    bt_cfg_raw = cfg["evaluation"]["backtest"]
-    strategy_name = str(bt_cfg_raw.get("strategy", "buy_and_hold"))
-    strategies_cfg = bt_cfg_raw.get("strategies") or {}
+        # Strategy/policy selection
+        policy_arg = (policy or "").strip()
+        if policy_arg == "" or policy_arg.lower() == "baseline":
+            strategy_name = "buy_and_hold"
+        else:
+            strategy_name = policy_arg
 
-    bt_cfg = BacktestConfig(
-        initial_cash=float(bt_cfg_raw.get("initial_cash", 1000.0)),
-        order_size_quote=float(bt_cfg_raw.get("order_size_quote", 0.0)),
-        taker_fee_rate=float(bt_cfg_raw.get("taker_fee_rate", 0.001)),
-        slippage_bps=float(bt_cfg_raw.get("slippage_bps", 0.0)),
-    )
+        params: Dict[str, Any] = {}
+        strategy_used: str
 
-    started_utc = _iso_utc_now()
+        p = Path(strategy_name)
+        if p.suffix.lower() == ".zip" and p.exists():
+            log.info(f"Loading SB3 policy: {p}")
+            model = _try_load_sb3_model(p)
+            obs = _build_obs_matrix(arrays)
+            strategy: Strategy = SB3PolicyStrategy(model=model, obs_matrix=obs)
+            strategy_used = str(p)
+            params = {"policy_type": "sb3", "policy_path": str(p), "obs_shape": list(obs.shape)}
+        else:
+            strategy = make_strategy(strategy_name, **(dict(strategies_cfg or {})))
+            strategy_used = strategy_name
+            params = {"strategy": strategy_name, **(dict(strategies_cfg or {}))}
 
-    # ✅ backtester expects a Strategy object, not a string
-    strategy = make_strategy(strategy_name, strategies_cfg)
+        run_input = {
+            "run_id": resolved_run_id,
+            "mode": mode,
+            "dataset_id": dataset_id,
+            "policy": policy,
+            "strategy_used": strategy_used,
+            "params": params,
+            "cfg": asdict(cfg_obj),
+            "started_utc": started_utc,
+            "dataset_debug": {
+                "root": dataset_meta.get("_dataset_root"),
+                "meta_path": dataset_meta.get("_meta_path"),
+                "npz_path": dataset_meta.get("_npz_path"),
+                "npz_keys": list(arrays.keys()),
+            },
+        }
+        _write_json(out_dir / "run_input.json", run_input)
 
-    if mode == "spot":
-        equity_rows, trade_rows, metrics, params = run_spot_backtest(
-            dataset_meta=dataset_meta,
-            arrays=arrays,
-            strategy=strategy,
-            cfg=bt_cfg,
-        )
-    elif mode == "futures":
-        equity_rows, trade_rows, metrics, params = run_futures_backtest(
-            dataset_meta=dataset_meta,
-            arrays=arrays,
-            strategy=strategy,
-            cfg=bt_cfg,
-        )
-    else:
-        raise ValueError(f"Unknown mode: {mode}")
+        if mode == "spot":
+            equity_rows, trade_rows, metrics, extra = run_spot_backtest(
+                dataset_meta=dataset_meta,
+                arrays=arrays,
+                strategy=strategy,
+                cfg=cfg_obj,
+            )
+        else:
+            equity_rows, trade_rows, metrics, extra = run_futures_backtest(
+                dataset_meta=dataset_meta,
+                arrays=arrays,
+                strategy=strategy,
+                cfg=cfg_obj,
+            )
 
-    finished_utc = _iso_utc_now()
+        finished_utc = _utc_iso()
 
-    out_dir = ensure_dir(artifacts_base_dir / "backtests" / run_id)
+        run_json = {
+            **run_input,
+            "finished_utc": finished_utc,
+            "status": "ok",
+            "metrics": metrics.to_dict(),
+            "extra": extra,
+            "artifacts_dir": str(out_dir),
+            "equity_rows": equity_rows,
+            "trade_rows": trade_rows,
+        }
+        _write_json(out_dir / "run.json", run_json)
 
-    # Core outputs expected by determinism/unit tests
-    _write_csv(out_dir / "equity.csv", equity_rows)
-    _write_csv(out_dir / "trades.csv", trade_rows)
-    write_json(out_dir / "metrics.json", metrics.to_dict())
-    write_json(out_dir / "params.json", params)
-    write_json(out_dir / "dataset_meta.json", dict(dataset_meta))
+        return {
+            "run_id": resolved_run_id,
+            "mode": mode,
+            "dataset_id": dataset_id,
+            "policy": policy,
+            "strategy_used": strategy_used,
+            "status": "ok",
+            "artifacts_dir": str(out_dir),
+        }
 
-    # Minimal run metadata (useful + aligns with schema expectations)
-    run_json = {
-        "run_id": run_id,
-        "kind": "backtest",
-        "mode": mode,
-        "created_utc": started_utc,
-        "finished_utc": finished_utc,
-        "seed": seed,
-        "dataset_id": str(bt_cfg_raw.get("dataset_id", dataset_meta.get("dataset_id", ""))),
-        "strategy": strategy_name,
-        "out_dir": str(out_dir),
-    }
-    write_json(out_dir / "run.json", run_json)
-
-    # Step 11/12 report artifacts
-    repro = build_repro_payload(
-        seed=seed,
-        dataset_id=str(bt_cfg_raw.get("dataset_id", dataset_meta.get("dataset_id", ""))),
-        dataset_hash=str(dataset_meta.get("dataset_hash")) if dataset_meta.get("dataset_hash") is not None else None,
-        kind="backtest",
-        run_id=run_id,
-        mode=mode,
-        config_hash=None,
-        extra={
-            "strategy": strategy_name,
-            "taker_fee_rate": bt_cfg.taker_fee_rate,
-            "slippage_bps": bt_cfg.slippage_bps,
-        },
-    )
-
-    generate_run_report(
-        out_dir,
-        title=f"Backtest - {mode.upper()} - {dataset_meta.get('symbol','')} - {strategy_name}",
-        equity_rows=equity_rows,
-        trades_rows=trade_rows,
-        metrics=metrics.to_dict(),
-        repro=repro,
-    )
-
-    # Persist to DB (tests verify FK + DONE status)
-    db_path = Path(cfg["db"]["path"])
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    ensure_schema_migrations(conn)
-    apply_migrations(conn, repo_root() / "sql" / "migrations")
-
-    # runs.config_hash is NOT NULL. Provide a deterministic non-null value.
-    config_hash = f"cfg::{mode}::{run_id}"
-
-    _ensure_run_row(
-        conn,
-        run_id=run_id,
-        kind="backtest",
-        mode=mode,
-        created_utc=started_utc,
-        seed=seed,
-        status="DONE",
-        run_dir=str(out_dir),
-        run_json_path=str(out_dir / "run.json"),
-        run_log_path=None,
-        global_log_path=None,
-        config_hash=config_hash,
-    )
-    conn.commit()
-
-    persist_backtest_to_db(
-        conn=conn,
-        backtest_id=run_id,
-        run_id=run_id,
-        mode=mode,
-        dataset_meta=dataset_meta,
-        cfg=bt_cfg,
-        params_json=json.dumps(params, ensure_ascii=False),
-        metrics=metrics,
-        equity_rows=equity_rows,
-        trade_rows=trade_rows,
-        started_utc=started_utc,
-        finished_utc=finished_utc,
-        status="DONE",
-    )
-    conn.commit()
-    conn.close()
-
-    return {
-        "result": {"out_dir": str(out_dir)},
-        "metrics": metrics.to_dict(),
-        "params": params,
-    }
+    except Exception as e:
+        finished_utc = _utc_iso()
+        _write_error(out_dir / "error.txt", e)
+        try:
+            _write_json(
+                out_dir / "run.json",
+                {
+                    "run_id": resolved_run_id,
+                    "mode": mode,
+                    "dataset_id": dataset_id,
+                    "policy": policy,
+                    "started_utc": started_utc,
+                    "finished_utc": finished_utc,
+                    "status": "error",
+                    "artifacts_dir": str(out_dir),
+                },
+            )
+        except Exception:
+            pass
+        raise

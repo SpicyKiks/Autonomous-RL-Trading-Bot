@@ -13,9 +13,22 @@ def _iso_utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _json_serialize_paths(obj: Any) -> Any:
+    """Recursively convert Path objects to strings for JSON serialization."""
+    if isinstance(obj, Path):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {k: _json_serialize_paths(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_json_serialize_paths(item) for item in obj]
+    else:
+        return obj
+
+
 def write_json(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    serialized = _json_serialize_paths(payload)
+    path.write_text(json.dumps(serialized, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def read_json(path: Path) -> Dict[str, Any]:

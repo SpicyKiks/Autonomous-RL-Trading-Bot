@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -54,11 +54,11 @@ def _utc_iso() -> str:
 def load_dataset(dataset_dir: Path, split: Optional[str] = None) -> Tuple[Dict[str, Any], Dict[str, np.ndarray]]:
     """
     Load meta.json + dataset.npz from a dataset directory.
-    
+
     Args:
         dataset_dir: Directory containing meta.json and dataset.npz
         split: Optional split name ('train', 'val', 'test') to filter data
-    
+
     Returns:
         Tuple of (meta, arrays) with potentially filtered arrays based on split
     """
@@ -77,7 +77,7 @@ def load_dataset(dataset_dir: Path, split: Optional[str] = None) -> Tuple[Dict[s
     for k in required:
         if k not in arrays:
             raise ValueError(f"dataset.npz missing required key: {k}")
-    
+
     # Filter by split if requested
     if split is not None:
         splits = meta.get("splits")
@@ -85,11 +85,11 @@ def load_dataset(dataset_dir: Path, split: Optional[str] = None) -> Tuple[Dict[s
             raise ValueError(f"Dataset does not have splits metadata, cannot filter by split={split}")
         if split not in splits:
             raise ValueError(f"Unknown split: {split}. Available: {list(splits.keys())}")
-        
+
         split_info = splits[split]
         start_idx = split_info["start_idx"]
         end_idx = split_info["end_idx"]
-        
+
         # Filter all arrays
         arrays = {k: v[start_idx:end_idx] for k, v in arrays.items()}
 
@@ -104,6 +104,107 @@ def _calc_drawdown(equity: float, peak: float) -> float:
 
 def _slippage_frac(slippage_bps: float) -> float:
     return max(0.0, float(slippage_bps) / 10_000.0)
+
+
+# ─────────────────────────────────────────────────────────────
+# Strategy interface compatibility:
+# - step-wise: strategy.act(t, price) -> action
+# - vectorized baselines: strategy.generate_positions(df) -> per-step target position
+# We convert "positions" into actions:
+#   spot:  target>0 => BUY(1), target<=0 => SELL ALL(3)
+#   futures: target in {-1,0,1} => BUY(1) / SELL(2) / CLOSE(3)
+# ─────────────────────────────────────────────────────────────
+
+def _build_df_for_strategy(
+    dataset_meta: Mapping[str, Any],
+    arrays: Mapping[str, np.ndarray],
+) -> Any:
+    """
+    Build a pandas DataFrame only if a vectorized baseline needs it.
+    Keeps this module light by importing pandas lazily.
+    """
+    import pandas as pd  # local import to avoid hard dependency at import time
+
+    times = np.asarray(arrays["open_time_ms"], dtype=np.int64)
+    close = np.asarray(arrays["close"], dtype=np.float64)
+
+    df = pd.DataFrame(
+        {
+            "open_time_ms": times,
+            "close": close,
+        }
+    )
+
+    # Many baseline generators expect a datetime index or a 'timestamp' column.
+    # We keep it simple: add a datetime column in UTC for convenience.
+    try:
+        df["datetime"] = pd.to_datetime(df["open_time_ms"], unit="ms", utc=True)
+    except Exception:
+        pass
+
+    # Optional meta fields can be useful for some strategy implementations
+    for k in ("symbol", "interval", "market_type", "dataset_id"):
+        if k in dataset_meta and k not in df.columns:
+            df[k] = str(dataset_meta.get(k) or "")
+
+    return df
+
+
+def _resolve_action_provider(
+    *,
+    dataset_meta: Mapping[str, Any],
+    arrays: Mapping[str, np.ndarray],
+    strategy: Strategy,
+    market_type: str,
+) -> Callable[[int, float], int]:
+    """
+    Returns function action(t, price) -> int.
+    """
+    # Vectorized baseline case
+    if (not hasattr(strategy, "act")) and hasattr(strategy, "generate_positions"):
+        df = _build_df_for_strategy(dataset_meta, arrays)
+        positions = strategy.generate_positions(df)
+
+        # normalize to numpy array for fast indexing
+        try:
+            positions_np = positions.to_numpy(dtype=float)  # pandas Series
+        except Exception:
+            positions_np = np.asarray(positions, dtype=float)
+
+        if positions_np.ndim != 1:
+            raise ValueError("generate_positions(df) must return a 1D series/array")
+
+        if market_type == "spot":
+            # spot action space in your engine:
+            # 1 buy, 2 sell partial, 3 sell all
+            # For baselines we only need: buy or flat => close-all.
+            def action_fn(t: int, price: float) -> int:
+                p = float(positions_np[t])
+                return 1 if p > 0 else 3
+
+            return action_fn
+
+        # futures: 1=buy(long), 2=sell(short/open), 3=close
+        def action_fn(t: int, price: float) -> int:
+            p = float(positions_np[t])
+            if p > 0:
+                return 1
+            if p < 0:
+                return 2
+            return 3
+
+        return action_fn
+
+    # Step-wise strategy case
+    def action_fn(t: int, price: float) -> int:
+        # Some strategies may accept df keyword; keep backward compatible.
+        try:
+            return int(strategy.act(t, price))
+        except TypeError:
+            df = _build_df_for_strategy(dataset_meta, arrays)
+            return int(strategy.act(t, price, df=df))
+
+    return action_fn
 
 
 # ─────────────────────────────────────────────────────────────
@@ -238,6 +339,14 @@ def run_spot_backtest(
     interval = str(dataset_meta.get("interval") or "")
     interval_ms = interval_to_ms(interval) if interval else int(times[1] - times[0])
 
+    # ✅ NEW: resolve action provider (step-wise vs vectorized)
+    action_of = _resolve_action_provider(
+        dataset_meta=dataset_meta,
+        arrays=arrays,
+        strategy=strategy,
+        market_type="spot",
+    )
+
     state = SpotState(
         cash=float(cfg.initial_cash),
         qty_base=0.0,
@@ -255,7 +364,7 @@ def run_spot_backtest(
         ot = int(times[t])
         price = float(close[t])
 
-        action = int(strategy.act(t, price))
+        action = int(action_of(t, price))
         trade: Optional[Dict[str, Any]] = None
 
         if action == 1:
@@ -581,6 +690,14 @@ def run_futures_backtest(
     interval = str(dataset_meta.get("interval") or "")
     interval_ms = interval_to_ms(interval) if interval else int(times[1] - times[0])
 
+    # ✅ NEW: resolve action provider (step-wise vs vectorized)
+    action_of = _resolve_action_provider(
+        dataset_meta=dataset_meta,
+        arrays=arrays,
+        strategy=strategy,
+        market_type="futures",
+    )
+
     fee_rate = max(0.0, float(cfg.taker_fee_rate))
     slip = _slippage_frac(cfg.slippage_bps)
 
@@ -615,7 +732,7 @@ def run_futures_backtest(
         )
         equity = float(state.collateral + unpnl)
 
-        action = int(strategy.act(t, price))
+        action = int(action_of(t, price))
         trade: Optional[Dict[str, Any]] = None
 
         # Determine desired delta qty

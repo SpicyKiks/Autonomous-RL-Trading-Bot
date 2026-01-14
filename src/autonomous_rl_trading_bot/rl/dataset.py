@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,11 @@ def load_dataset_npz(dataset_dir: Path, split: Optional[str] = None) -> LoadedDa
       - meta.json
       - dataset.npz
       - optional scaler file (referenced by meta["scaler_path"])
+
+    Split behavior:
+      - split is None      -> load full dataset
+      - split == "full"    -> load full dataset (compat alias used by baselines)
+      - split in meta["splits"] (train/val/test/...) -> slice accordingly
     """
     meta_path = dataset_dir / "meta.json"
     npz_path = dataset_dir / "dataset.npz"
@@ -54,7 +60,7 @@ def load_dataset_npz(dataset_dir: Path, split: Optional[str] = None) -> LoadedDa
     data = {k: npz[k] for k in npz.files}
 
     # Load scaler if available
-    scaler = None
+    scaler: Optional[RobustScaler] = None
     scaler_path_str = meta.get("scaler_path")
     if scaler_path_str:
         scaler_path = dataset_dir / scaler_path_str
@@ -65,7 +71,8 @@ def load_dataset_npz(dataset_dir: Path, split: Optional[str] = None) -> LoadedDa
     feature_list = meta.get("feature_list")
 
     # Filter by split if requested
-    if split is not None:
+    # NOTE: baselines/backtester sometimes pass split="full" - treat that as "no slicing".
+    if split is not None and split != "full":
         splits = meta.get("splits")
         if not splits:
             raise ValueError(
@@ -98,10 +105,10 @@ def select_latest_dataset(artifacts_datasets_dir: Path, market_type: str) -> Loa
     if market_type not in ("spot", "futures"):
         raise ValueError(f"market_type must be spot|futures, got {market_type}")
 
-    candidates: list[Tuple[float, Path]] = []
-
     if not artifacts_datasets_dir.exists():
         raise FileNotFoundError(f"datasets dir not found: {artifacts_datasets_dir}")
+
+    candidates: list[Tuple[float, Path]] = []
 
     for p in artifacts_datasets_dir.iterdir():
         if not p.is_dir():
@@ -139,7 +146,7 @@ def select_latest_dataset(artifacts_datasets_dir: Path, market_type: str) -> Loa
 @dataclass(frozen=True)
 class Dataset:
     """
-    Wrapper expected by training code.
+    Wrapper expected by training/evaluation code.
 
     Built on the NPZ pipeline (meta.json + dataset.npz).
     """
@@ -154,60 +161,84 @@ class Dataset:
 
     @staticmethod
     def _project_root() -> Path:
-        return Path(__file__).resolve().parents[4]
+        """
+        Resolve the project root directory.
+
+        Priority:
+          1) ARBT_ROOT environment variable (if set)
+          2) infer from this file location
+          3) current working directory
+        """
+        env_root = os.getenv("ARBT_ROOT")
+        if env_root:
+            p = Path(env_root).expanduser().resolve()
+            if p.exists():
+                return p
+
+        # src/autonomous_rl_trading_bot/rl/dataset.py -> go up to repo root
+        try:
+            return Path(__file__).resolve().parents[3]
+        except Exception:
+            return Path.cwd().resolve()
+    
+    def to_dataframe(self) -> pd.DataFrame:
+        """
+        Baselines/backtests expect this method.
+        Returns the main dataframe with market data/features.
+        """
+        return self.df.copy()
+
 
     @classmethod
     def _find_dataset_dir(cls, dataset_id: str) -> Optional[Path]:
+        """
+        Find dataset directory by exact dataset_id under known bases.
+        """
         root = cls._project_root()
-        bases = [
-            root / "artifacts" / "datasets",
-            root / "datasets",
-            root / "data",
-            root / "artifacts",
+
+        candidates = [
+            root / "artifacts" / "datasets" / dataset_id,
+            root / "datasets" / dataset_id,
+            root / "data" / dataset_id,
+            root / "artifacts" / dataset_id,
         ]
 
-        candidates: list[Path] = []
-        for base in bases:
-            if not base.exists():
-                continue
+        for p in candidates:
+            if p.exists() and p.is_dir():
+                return p
 
-            exact = base / dataset_id
-            if exact.exists() and exact.is_dir():
-                candidates.append(exact)
-
-            for p in base.glob(f"*{dataset_id}*"):
-                if p.is_dir():
-                    candidates.append(p)
-
-        if not candidates:
-            return None
-
-        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        return candidates[0]
+        return None
 
     @staticmethod
     def _to_df(ld: LoadedDataset) -> pd.DataFrame:
+        # Prefer feature_list if present
         if ld.feature_list:
-            cols = {}
+            cols: Dict[str, np.ndarray] = {}
             for name in ld.feature_list:
                 if name in ld.data:
                     cols[name] = ld.data[name]
             if cols:
                 return pd.DataFrame(cols)
 
-        lengths = []
-        cols = {}
+        # Fallback: all 1D arrays with same length
+        lengths: list[int] = []
+        cols2: Dict[str, np.ndarray] = {}
         for k, v in ld.data.items():
             if isinstance(v, np.ndarray) and v.ndim == 1:
-                cols[k] = v
+                cols2[k] = v
                 lengths.append(len(v))
-        if cols and len(set(lengths)) == 1:
-            return pd.DataFrame(cols)
+        if cols2 and len(set(lengths)) == 1:
+            return pd.DataFrame(cols2)
 
         return pd.DataFrame()
 
     @classmethod
-    def load(cls, dataset_id: str, market_type: str = "spot", split: Optional[str] = None) -> "Dataset":
+    def load(
+        cls,
+        dataset_id: str,
+        market_type: str = "spot",
+        split: Optional[str] = None,
+    ) -> "Dataset":
         ds_dir = cls._find_dataset_dir(dataset_id)
         if ds_dir is None:
             root = cls._project_root()
@@ -220,6 +251,14 @@ class Dataset:
             )
 
         ld = load_dataset_npz(ds_dir, split=split)
+
+        # If meta contains market_type and it disagrees, fail early (helps debugging)
+        meta_market = ld.meta.get("market_type")
+        if meta_market and meta_market != market_type:
+            raise ValueError(
+                f"Dataset market_type mismatch: requested '{market_type}' but meta.json says '{meta_market}'"
+            )
+
         df = cls._to_df(ld)
 
         return cls(
@@ -293,7 +332,92 @@ class Dataset:
                 dataset_dir=self.dataset_dir,
             ),
         )
+    
+    @staticmethod
+    def _to_df(ld: LoadedDataset) -> pd.DataFrame:
+        """
+        Build a DataFrame that baselines/backtests can use.
 
+        Priority:
+          1) Always include core price columns if present: open, high, low, close, volume
+          2) Then include remaining 1D arrays (same length) for indicators/features
+        """
+        # Common column aliases we may want to normalize to expected names
+        preferred = ["timestamp", "time", "datetime", "date", "open", "high", "low", "close", "volume"]
+
+        # Collect all 1D arrays
+        one_d: Dict[str, np.ndarray] = {}
+        lengths = set()
+
+        for k, v in ld.data.items():
+            if isinstance(v, np.ndarray) and v.ndim == 1:
+                one_d[k] = v
+                lengths.add(len(v))
+
+        if not one_d:
+            return pd.DataFrame()
+
+        # If lengths mismatch, we can't safely combine everything
+        if len(lengths) != 1:
+            # Try only preferred columns that match the most common length
+            # (rare, but prevents silent wrong merges)
+            most_common_len = max(lengths, key=lambda L: sum(1 for a in one_d.values() if len(a) == L))
+            one_d = {k: v for k, v in one_d.items() if len(v) == most_common_len}
+            if not one_d:
+                return pd.DataFrame()
+
+        # Start with preferred columns (if present)
+        cols: Dict[str, np.ndarray] = {}
+        for name in preferred:
+            if name in one_d:
+                cols[name] = one_d.pop(name)
+
+        # If close is missing, try common alternatives
+        if "close" not in cols:
+            for alt in ("Close", "CLOSE", "close_price", "price", "last", "adj_close", "Adj Close", "adjclose"):
+                if alt in one_d:
+                    cols["close"] = one_d.pop(alt)
+                    break
+
+        # If volume is missing, try common alternatives
+        if "volume" not in cols:
+            for alt in ("Volume", "VOL", "vol", "quote_volume", "base_volume"):
+                if alt in one_d:
+                    cols["volume"] = one_d.pop(alt)
+                    break
+
+        # If open/high/low missing, try common alternatives
+        if "open" not in cols:
+            for alt in ("Open", "OPEN", "open_price"):
+                if alt in one_d:
+                    cols["open"] = one_d.pop(alt)
+                    break
+
+        if "high" not in cols:
+            for alt in ("High", "HIGH", "high_price"):
+                if alt in one_d:
+                    cols["high"] = one_d.pop(alt)
+                    break
+
+        if "low" not in cols:
+            for alt in ("Low", "LOW", "low_price"):
+                if alt in one_d:
+                    cols["low"] = one_d.pop(alt)
+                    break
+
+        # Now add features/indicators:
+        # - if feature_list exists, add those first
+        if ld.feature_list:
+            for name in ld.feature_list:
+                if name in one_d and name not in cols:
+                    cols[name] = one_d.pop(name)
+
+        # Add whatever is left (stable order)
+        for k in sorted(one_d.keys()):
+            if k not in cols:
+                cols[k] = one_d[k]
+
+        return pd.DataFrame(cols)
 
 __all__ = [
     "LoadedDataset",

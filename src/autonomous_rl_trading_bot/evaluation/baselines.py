@@ -1,254 +1,283 @@
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass, field
-from typing import Deque, Dict, Optional, Protocol
+import argparse
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
 
 
-class Strategy(Protocol):
-    """Deterministic strategy mapping (t, price) -> action int.
+# ------------------------------------------------------------
+# Strategy interface (THIS is what backtester.py is trying to import)
+# ------------------------------------------------------------
 
-    Spot actions (engine interprets):
-      0=Hold, 1=Buy, 2=Sell, 3=Close
+class Strategy:
+    """
+    Minimal baseline strategy interface.
 
-    Futures actions (engine interprets):
-      0=Hold, 1=Buy/Increase Long (or reduce short), 2=Sell/Increase Short (or reduce long), 3=Close
+    backtester.py imports Strategy from here.
+    We keep it intentionally simple and stable:
+      - reset() optional
+      - generate_positions(df) returns a pd.Series of positions in {-1,0,1}
     """
 
-    def act(self, t: int, price: float) -> int: ...
+    name: str = "strategy"
+
+    def reset(self) -> None:
+        pass
+
+    def generate_positions(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Given OHLCV dataframe, return a position series:
+          +1 = long, 0 = flat, -1 = short
+        Must have same length as df and aligned with df.index.
+        """
+        raise NotImplementedError
 
 
-def _norm_name(name: str) -> str:
-    return (name or "").strip().lower().replace("-", "_").replace(" ", "_")
+# ------------------------------------------------------------
+# Baseline strategies
+# ------------------------------------------------------------
 
+@dataclass
+class BuyAndHold(Strategy):
+    name: str = "buy_and_hold"
+    allow_short: bool = False
 
-@dataclass(frozen=True)
-class BuyAndHoldStrategy:
-    """Buy/Long at first step. Engine force-closes at the end."""
-
-    def act(self, t: int, price: float) -> int:
-        if t == 0:
-            return 1
-        return 0
+    def generate_positions(self, df: pd.DataFrame) -> pd.Series:
+        pos = pd.Series(1, index=df.index, dtype=np.int8)
+        if not self.allow_short:
+            # always long
+            return pos
+        return pos
 
 
 @dataclass
-class SMACrossoverStrategy:
-    """SMA fast/slow crossover.
+class SMACrossover(Strategy):
+    name: str = "sma_crossover"
+    fast: int = 20
+    slow: int = 100
+    allow_short: bool = True
 
-    Emits:
-      - BUY (1) on bullish crossover (fast crosses above slow)
-      - SELL (2) on bearish crossover (fast crosses below slow)
-    """
+    def generate_positions(self, df: pd.DataFrame) -> pd.Series:
+        close = _require_col(df, "close").astype(float)
 
-    fast: int
-    slow: int
+        fast_ma = close.rolling(self.fast, min_periods=self.fast).mean()
+        slow_ma = close.rolling(self.slow, min_periods=self.slow).mean()
 
-    _fast_q: Deque[float] = field(default_factory=lambda: deque())
-    _slow_q: Deque[float] = field(default_factory=lambda: deque())
-    _fast_sum: float = 0.0
-    _slow_sum: float = 0.0
-    _prev_diff: Optional[float] = None
+        # signal: fast above slow => long, below => short/flat
+        long_mask = fast_ma > slow_ma
+        short_mask = fast_ma < slow_ma
 
-    def __post_init__(self) -> None:
-        if self.fast <= 0 or self.slow <= 0:
-            raise ValueError("SMA periods must be > 0")
-        if self.fast >= self.slow:
-            raise ValueError("SMA requires fast < slow")
-        object.__setattr__(self, "_fast_q", deque(maxlen=self.fast))
-        object.__setattr__(self, "_slow_q", deque(maxlen=self.slow))
+        pos = pd.Series(0, index=df.index, dtype=np.int8)
+        pos[long_mask] = 1
+        if self.allow_short:
+            pos[short_mask] = -1
+        else:
+            pos[short_mask] = 0
 
-    def act(self, t: int, price: float) -> int:
-        # Update fast window
-        if len(self._fast_q) == self._fast_q.maxlen:
-            self._fast_sum -= self._fast_q[0]
-        self._fast_q.append(price)
-        self._fast_sum += price
-
-        # Update slow window
-        if len(self._slow_q) == self._slow_q.maxlen:
-            self._slow_sum -= self._slow_q[0]
-        self._slow_q.append(price)
-        self._slow_sum += price
-
-        if len(self._fast_q) < self.fast or len(self._slow_q) < self.slow:
-            return 0
-
-        fast_sma = self._fast_sum / self.fast
-        slow_sma = self._slow_sum / self.slow
-        diff = fast_sma - slow_sma
-
-        action = 0
-        if self._prev_diff is not None:
-            if self._prev_diff <= 0.0 and diff > 0.0:
-                action = 1  # bullish cross => buy
-            elif self._prev_diff >= 0.0 and diff < 0.0:
-                action = 2  # bearish cross => sell
-        self._prev_diff = diff
-        return action
+        # avoid NaN warmup leading to bogus positions
+        pos = pos.fillna(0).astype(np.int8)
+        return pos
 
 
 @dataclass
-class EMACrossoverStrategy:
-    """EMA fast/slow crossover.
+class RSIReversion(Strategy):
+    name: str = "rsi_reversion"
+    period: int = 14
+    oversold: float = 30.0
+    overbought: float = 70.0
+    allow_short: bool = True
 
-    Uses standard EMA with alpha=2/(period+1).
-    Emits BUY on bullish cross, SELL on bearish cross.
-    """
+    def generate_positions(self, df: pd.DataFrame) -> pd.Series:
+        close = _require_col(df, "close").astype(float)
+        rsi = _rsi(close, period=self.period)
 
-    fast: int
-    slow: int
-
-    _ema_fast: Optional[float] = None
-    _ema_slow: Optional[float] = None
-    _prev_diff: Optional[float] = None
-
-    def __post_init__(self) -> None:
-        if self.fast <= 0 or self.slow <= 0:
-            raise ValueError("EMA periods must be > 0")
-        if self.fast >= self.slow:
-            raise ValueError("EMA requires fast < slow")
-
-    def act(self, t: int, price: float) -> int:
-        a_fast = 2.0 / (self.fast + 1.0)
-        a_slow = 2.0 / (self.slow + 1.0)
-
-        if self._ema_fast is None:
-            self._ema_fast = price
+        pos = pd.Series(0, index=df.index, dtype=np.int8)
+        # mean reversion idea:
+        # oversold -> long
+        # overbought -> short/flat
+        pos[rsi < self.oversold] = 1
+        if self.allow_short:
+            pos[rsi > self.overbought] = -1
         else:
-            self._ema_fast = (a_fast * price) + (1.0 - a_fast) * self._ema_fast
+            pos[rsi > self.overbought] = 0
 
-        if self._ema_slow is None:
-            self._ema_slow = price
-        else:
-            self._ema_slow = (a_slow * price) + (1.0 - a_slow) * self._ema_slow
-
-        diff = self._ema_fast - self._ema_slow
-        action = 0
-        if self._prev_diff is not None:
-            if self._prev_diff <= 0.0 and diff > 0.0:
-                action = 1
-            elif self._prev_diff >= 0.0 and diff < 0.0:
-                action = 2
-        self._prev_diff = diff
-        return action
+        pos = pos.fillna(0).astype(np.int8)
+        return pos
 
 
-@dataclass
-class RSIReversionStrategy:
-    """RSI mean-reversion using Wilder smoothing.
+# ------------------------------------------------------------
+# CLI runner (so `arbt baselines` actually works)
+# ------------------------------------------------------------
 
-    - BUY when RSI < low
-    - SELL when RSI > high
-    Uses a latch so it fires once per excursion.
+def run_baselines(
+    dataset_id: Optional[str],
+    mode: str,
+    out_csv: Optional[str],
+    strategies: List[Strategy],
+) -> int:
     """
+    Loads dataset (via rl.dataset.Dataset) and outputs a CSV of positions for each baseline.
+    This is intentionally lightweight and independent from the RL trainer.
 
-    period: int
-    low: float
-    high: float
-
-    _prev_price: Optional[float] = None
-    _avg_gain: Optional[float] = None
-    _avg_loss: Optional[float] = None
-    _seed_gains: Deque[float] = field(default_factory=lambda: deque())
-    _seed_losses: Deque[float] = field(default_factory=lambda: deque())
-    _armed_buy: bool = True
-    _armed_sell: bool = True
-
-    def __post_init__(self) -> None:
-        if self.period <= 1:
-            raise ValueError("RSI period must be > 1")
-        if not (0.0 < self.low < 100.0 and 0.0 < self.high < 100.0):
-            raise ValueError("RSI thresholds must be in (0,100)")
-        if self.low >= self.high:
-            raise ValueError("RSI requires low < high")
-        object.__setattr__(self, "_seed_gains", deque(maxlen=self.period))
-        object.__setattr__(self, "_seed_losses", deque(maxlen=self.period))
-
-    def _compute_rsi(self) -> Optional[float]:
-        if self._avg_gain is None or self._avg_loss is None:
-            return None
-        if self._avg_loss == 0.0:
-            return 100.0
-        rs = self._avg_gain / self._avg_loss
-        return 100.0 - (100.0 / (1.0 + rs))
-
-    def act(self, t: int, price: float) -> int:
-        if self._prev_price is None:
-            self._prev_price = price
-            return 0
-
-        change = price - self._prev_price
-        self._prev_price = price
-
-        gain = max(0.0, change)
-        loss = max(0.0, -change)
-
-        # Seed the Wilder averages for the first `period` steps
-        if self._avg_gain is None or self._avg_loss is None:
-            self._seed_gains.append(gain)
-            self._seed_losses.append(loss)
-            if len(self._seed_gains) < self.period:
-                return 0
-            self._avg_gain = sum(self._seed_gains) / self.period
-            self._avg_loss = sum(self._seed_losses) / self.period
-        else:
-            # Wilder smoothing
-            self._avg_gain = (self._avg_gain * (self.period - 1) + gain) / self.period
-            self._avg_loss = (self._avg_loss * (self.period - 1) + loss) / self.period
-
-        rsi = self._compute_rsi()
-        if rsi is None:
-            return 0
-
-        # Rearm when back in neutral zone
-        if self.low <= rsi <= self.high:
-            self._armed_buy = True
-            self._armed_sell = True
-            return 0
-
-        if rsi < self.low and self._armed_buy:
-            self._armed_buy = False
-            self._armed_sell = True
-            return 1
-
-        if rsi > self.high and self._armed_sell:
-            self._armed_sell = False
-            self._armed_buy = True
-            return 2
-
-        return 0
-
-
-def make_strategy(name: str, params: Optional[Dict[str, float | int]] = None) -> Strategy:
-    """Create a strategy by name with optional params dict.
-
-    Supported:
-      - buy_and_hold
-      - sma_crossover (fast, slow)
-      - ema_crossover (fast, slow)
-      - rsi_reversion (period, low, high)
+    If you want it to run backtests, integrate with evaluation.backtester.py later.
     """
-    n = _norm_name(name)
-    p = params or {}
+    from autonomous_rl_trading_bot.rl.dataset import Dataset  # local import to avoid circulars
 
-    if n in ("buy_and_hold", "buyhold", "buy_hold", "buy_and_hold_strategy"):
-        return BuyAndHoldStrategy()
+    if dataset_id is None:
+        # try to use "latest" dataset by scanning artifacts/datasets
+        dataset_id = _find_latest_dataset_id(mode=mode)
 
-    if n in ("sma_crossover", "sma", "sma_cross"):
-        fast = int(p.get("fast", 10))
-        slow = int(p.get("slow", 30))
-        return SMACrossoverStrategy(fast=fast, slow=slow)
+    ds = Dataset.load(dataset_id, market_type=mode, split="full")
+    df = ds.to_dataframe()
 
-    if n in ("ema_crossover", "ema", "ema_cross"):
-        fast = int(p.get("fast", 12))
-        slow = int(p.get("slow", 26))
-        return EMACrossoverStrategy(fast=fast, slow=slow)
+    # normalize expected cols
+    if "close" not in df.columns and "Close" in df.columns:
+        df = df.rename(columns={"Close": "close"})
 
-    if n in ("rsi_reversion", "rsi", "rsi_mean_reversion", "rsi_mr"):
-        period = int(p.get("period", 14))
-        low = float(p.get("low", 30.0))
-        high = float(p.get("high", 70.0))
-        return RSIReversionStrategy(period=period, low=low, high=high)
+    out: Dict[str, pd.Series] = {}
+    for strat in strategies:
+        strat.reset()
+        out[strat.name] = strat.generate_positions(df)
 
-    raise ValueError(f"Unknown strategy: {name}")
+    out_df = pd.DataFrame(out, index=df.index)
+
+    if out_csv:
+        out_df.to_csv(out_csv, index=True)
+        print(f"OK: wrote baseline positions to {out_csv}")
+    else:
+        # print a compact preview
+        print(out_df.tail(20).to_string())
+
+    return 0
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    p = argparse.ArgumentParser(prog="arbt baselines", description="Run baseline strategies on a dataset.")
+    p.add_argument("--mode", choices=["spot", "futures"], default="spot", help="market mode (default: spot)")
+    p.add_argument("--dataset-id", default=None, help="dataset id under artifacts/datasets (default: latest)")
+    p.add_argument("--out", default=None, help="optional CSV output path")
+
+    # choose strategies
+    p.add_argument("--buyhold", action="store_true", help="include buy-and-hold")
+    p.add_argument("--sma", action="store_true", help="include SMA crossover")
+    p.add_argument("--rsi", action="store_true", help="include RSI reversion")
+    p.add_argument("--fast", type=int, default=20, help="SMA fast window")
+    p.add_argument("--slow", type=int, default=100, help="SMA slow window")
+    p.add_argument("--no-short", action="store_true", help="disable shorts (flat instead)")
+
+    args = p.parse_args(argv)
+
+    allow_short = not args.no_short
+
+    # default: run all if none specified
+    selected_any = args.buyhold or args.sma or args.rsi
+    strategies: List[Strategy] = []
+
+    if args.buyhold or not selected_any:
+        strategies.append(BuyAndHold(allow_short=allow_short))
+    if args.sma or not selected_any:
+        strategies.append(SMACrossover(fast=args.fast, slow=args.slow, allow_short=allow_short))
+    if args.rsi or not selected_any:
+        strategies.append(RSIReversion(allow_short=allow_short))
+
+    return run_baselines(
+        dataset_id=args.dataset_id,
+        mode=args.mode,
+        out_csv=args.out,
+        strategies=strategies,
+    )
+
+
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
+
+def _require_col(df: pd.DataFrame, col: str) -> pd.Series:
+    if col not in df.columns:
+        raise KeyError(f"Expected column '{col}' in dataframe. Available: {list(df.columns)}")
+    return df[col]
+
+
+def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    delta = close.diff()
+    gain = delta.clip(lower=0.0)
+    loss = (-delta).clip(lower=0.0)
+
+    avg_gain = gain.rolling(period, min_periods=period).mean()
+    avg_loss = loss.rolling(period, min_periods=period).mean()
+
+    rs = avg_gain / (avg_loss.replace(0.0, np.nan))
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    return rsi
+
+
+def _find_latest_dataset_id(mode: str) -> str:
+    """
+    Find latest dataset folder under:
+      <repo>/artifacts/datasets
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]  # .../src/autonomous_rl_trading_bot/evaluation/baselines.py -> repo root
+    ds_dir = root / "artifacts" / "datasets"
+
+    if not ds_dir.exists():
+        raise FileNotFoundError(f"Could not find datasets dir: {ds_dir}")
+
+    # filter by mode substring if present in folder name
+    candidates = [p for p in ds_dir.iterdir() if p.is_dir() and f"_{mode}_" in p.name]
+    if not candidates:
+        # fall back to any dataset
+        candidates = [p for p in ds_dir.iterdir() if p.is_dir()]
+
+    if not candidates:
+        raise FileNotFoundError(f"No datasets found under {ds_dir}")
+
+    # latest by name (timestamp prefix)
+    latest = sorted(candidates, key=lambda p: p.name)[-1]
+    return latest.name
+def make_strategy(name: str, **kwargs) -> Strategy:
+    """
+    Factory expected by evaluation/__init__.py and possibly backtester.
+    """
+    key = (name or "").strip().lower()
+
+    if key in {"buy_and_hold", "buyhold", "hold"}:
+        allow_short = bool(kwargs.get("allow_short", True))
+        return BuyAndHold(allow_short=allow_short)
+
+    if key in {"sma_crossover", "sma", "ma_crossover"}:
+        fast = int(kwargs.get("fast", 20))
+        slow = int(kwargs.get("slow", 100))
+        allow_short = bool(kwargs.get("allow_short", True))
+        return SMACrossover(fast=fast, slow=slow, allow_short=allow_short)
+
+    if key in {"rsi_reversion", "rsi"}:
+        period = int(kwargs.get("period", 14))
+        oversold = float(kwargs.get("oversold", 30.0))
+        overbought = float(kwargs.get("overbought", 70.0))
+        allow_short = bool(kwargs.get("allow_short", True))
+        return RSIReversion(
+            period=period,
+            oversold=oversold,
+            overbought=overbought,
+            allow_short=allow_short,
+        )
+
+    raise ValueError(
+        f"Unknown strategy '{name}'. Supported: buy_and_hold, sma_crossover, rsi_reversion"
+    )
+
+
+__all__ = [
+    "Strategy",
+    "make_strategy",
+    "BuyAndHold",
+    "SMACrossover",
+    "RSIReversion",
+    "run_baselines",
+    "main",
+]
