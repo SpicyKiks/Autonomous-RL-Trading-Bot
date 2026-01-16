@@ -36,3 +36,8 @@ dist/
 .venv_test/
 venv/
 env/
+
+# Environment variables (NEVER commit API keys)
+.env
+.env.local
+.env.*.local

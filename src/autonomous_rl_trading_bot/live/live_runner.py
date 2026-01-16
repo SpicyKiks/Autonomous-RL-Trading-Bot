@@ -10,8 +10,11 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from autonomous_rl_trading_bot.broker.base_broker import BrokerAdapter
+from autonomous_rl_trading_bot.broker.execution import order_for_target_fraction
 from autonomous_rl_trading_bot.common.db import connect
 from autonomous_rl_trading_bot.common.timeframes import interval_to_ms
+from autonomous_rl_trading_bot.common.types import OrderQtyUnit
 from autonomous_rl_trading_bot.data.candles_store import insert_candles
 from autonomous_rl_trading_bot.evaluation.baselines import Strategy, make_strategy
 from autonomous_rl_trading_bot.exchange.binance_public import Candle
@@ -79,6 +82,9 @@ class LiveRunnerConfig:
     run_id: str = ""
     run_dir: str = ""
 
+    # Demo mode
+    demo: bool = False  # If True, use real Binance Demo broker instead of paper trading
+
 
 class _Policy:
     def act_target(self, *, t: int, obs: np.ndarray, price: float) -> float:
@@ -89,9 +95,21 @@ class _BaselinePolicy(_Policy):
     def __init__(self, *, market_type: str, strategy: Strategy):
         self.market_type = market_type
         self.strategy = strategy
+        self._price_history: List[float] = []
+        self._time_history: List[int] = []
 
     def act_target(self, *, t: int, obs: np.ndarray, price: float) -> float:
-        a = int(self.strategy.act(t, float(price)))
+        # Handle strategies with act() method (step-wise)
+        if hasattr(self.strategy, "act"):
+            try:
+                a = int(self.strategy.act(t, float(price)))
+            except (TypeError, AttributeError):
+                # Fallback to generate_positions if act() fails
+                a = self._act_from_positions(t, price)
+        else:
+            # Handle strategies with generate_positions() method (vectorized)
+            a = self._act_from_positions(t, price)
+
         mt = self.market_type
 
         # evaluation.baselines actions:
@@ -111,6 +129,48 @@ class _BaselinePolicy(_Policy):
         if a == 3:
             return 0.0
         return 0.0
+
+    def _act_from_positions(self, t: int, price: float) -> int:
+        """Convert generate_positions() output to action for live trading."""
+        import pandas as pd
+
+        # Maintain price history for strategies that need DataFrame
+        self._price_history.append(float(price))
+        self._time_history.append(int(time.time() * 1000))  # Current timestamp in ms
+
+        # Keep reasonable history (last 1000 prices)
+        if len(self._price_history) > 1000:
+            self._price_history = self._price_history[-1000:]
+            self._time_history = self._time_history[-1000:]
+
+        # Build DataFrame for strategy
+        df = pd.DataFrame(
+            {
+                "open_time_ms": self._time_history,
+                "close": self._price_history,
+            }
+        )
+
+        # Call generate_positions
+        positions = self.strategy.generate_positions(df)
+
+        # Get position at current time step (last position)
+        if isinstance(positions, pd.Series):
+            pos_value = float(positions.iloc[-1]) if len(positions) > 0 else 0.0
+        else:
+            pos_value = float(positions[-1]) if len(positions) > 0 else 0.0
+
+        # Convert position to action
+        # position: +1=long, 0=flat, -1=short
+        # action: 0=Hold, 1=Buy/Long, 2=Sell/Short, 3=Close
+        if self.market_type == "spot":
+            return 1 if pos_value > 0 else 3  # Buy or close-all
+        else:  # futures
+            if pos_value > 0:
+                return 1  # Long
+            if pos_value < 0:
+                return 2  # Short
+            return 3  # Close
 
 
 class _SB3Policy(_Policy):
@@ -207,7 +267,49 @@ class LiveRunner:
             ),
         )
 
-        self.pos_sync = PositionSync()
+        # Broker setup: paper trading (default) or Binance Demo (if demo=True)
+        self.broker = None
+        if rcfg.demo:
+            import os
+            from autonomous_rl_trading_bot.broker.futures_broker import FuturesBroker
+            from autonomous_rl_trading_bot.broker.spot_broker import SpotBroker
+
+            api_key = os.getenv("BINANCE_DEMO_API_KEY")
+            api_secret = os.getenv("BINANCE_DEMO_API_SECRET")
+
+            if not api_key or not api_secret:
+                raise RuntimeError(
+                    "Demo mode requires BINANCE_DEMO_API_KEY and BINANCE_DEMO_API_SECRET environment variables. "
+                    "Set them before running with --demo flag."
+                )
+
+            # Get demo base URL from config
+            exchange_cfg = cfg.get("exchange", {}) or {}
+            if self.market_type == "spot":
+                spot_cfg = exchange_cfg.get("spot", {}) or {}
+                base_url_demo = spot_cfg.get("base_url_demo", "https://testnet.binance.vision")
+                self.broker = SpotBroker(
+                    api_key=api_key,
+                    api_secret=api_secret,
+                    demo=True,
+                    base_url_demo=base_url_demo,
+                )
+            else:  # futures
+                futures_cfg = exchange_cfg.get("futures", {}) or {}
+                base_url_demo = futures_cfg.get("base_url_demo", "https://demo-fapi.binance.com")
+                self.broker = FuturesBroker(
+                    api_key=api_key,
+                    api_secret=api_secret,
+                    demo=True,
+                    base_url_demo=base_url_demo,
+                    leverage=rcfg.futures_leverage,
+                )
+
+        self.pos_sync = PositionSync(
+            broker=self.broker,
+            symbol=rcfg.symbol,
+            market_type=self.market_type,
+        )
 
         self.safeguards = Safeguards(
             SafeguardsConfig(
@@ -236,6 +338,19 @@ class LiveRunner:
 
         self._t = 0
         self._init_db_rows()
+
+        # Log mode
+        import logging
+
+        logger = logging.getLogger("arbt")
+        logger.info("=" * 60)
+        if rcfg.demo:
+            logger.info("LIVE MODE: BINANCE DEMO")
+        else:
+            logger.info("LIVE MODE: PAPER")
+        logger.info(f"Market Type: {self.market_type.upper()}")
+        logger.info(f"Symbol: {rcfg.symbol}")
+        logger.info("=" * 60)
 
     def _make_policy(self) -> _Policy:
         p = (self.rcfg.policy or "baseline").strip().lower()
@@ -475,6 +590,11 @@ class LiveRunner:
         if equity_now <= 0.0:
             return None
 
+        # If broker exists (demo mode), submit real orders
+        if self.broker is not None:
+            return self._execute_to_target_demo(target=target, price=price, open_time_ms=open_time_ms, equity_now=equity_now)
+
+        # Paper trading mode: simulate execution
         if self.market_type == "spot":
             target_notional = equity_now * float(self.rcfg.position_fraction) * target
             target_qty = target_notional / price
@@ -583,6 +703,130 @@ class LiveRunner:
             "equity_after": float(equity_after),
         }
 
+    def _execute_to_target_demo(
+        self, *, target: float, price: float, open_time_ms: int, equity_now: float
+    ) -> Optional[Dict[str, Any]]:
+        """Execute order via real broker (demo mode)."""
+        import logging
+
+        logger = logging.getLogger("arbt")
+
+        # Get current position from broker
+        broker_pos = self.pos_sync.sync_from_broker()
+        current_qty = broker_pos.qty if broker_pos else 0.0
+
+        # Determine qty_unit based on market type
+        qty_unit: OrderQtyUnit = "base" if self.market_type == "spot" else "contracts"
+
+        # Create order request
+        order_req = order_for_target_fraction(
+            symbol=self.rcfg.symbol,
+            current_qty=current_qty,
+            equity=equity_now,
+            price=price,
+            target_fraction=target,
+            market_type=self.market_type,
+            qty_unit=qty_unit,
+            leverage=self.rcfg.futures_leverage if self.market_type == "futures" else 1.0,
+        )
+
+        if order_req is None:
+            return None  # No order needed
+
+        # Submit order via broker
+        try:
+            ack = self.broker.submit_order(order_req)
+            if ack.status == "rejected":
+                logger.warning(f"Order rejected: {ack.reason}")
+                return None
+
+            # Wait for fills (poll briefly)
+            import time
+
+            time.sleep(0.5)  # Brief wait for order to fill
+            fills = list(self.broker.iter_fills())
+
+            # Process fills and update state
+            total_qty = 0.0
+            total_fee = 0.0
+            weighted_price = 0.0
+            realized_pnl = 0.0
+
+            for fill in fills:
+                if fill.order_id == ack.order_id:
+                    total_qty += fill.qty
+                    total_fee += fill.fee_paid
+                    weighted_price += fill.price * abs(fill.qty)
+
+            if abs(total_qty) > 1e-12:
+                avg_fill_price = weighted_price / abs(total_qty) if weighted_price > 0 else price
+
+                # Update state based on fills
+                if self.market_type == "spot":
+                    if total_qty > 0:
+                        self.state.cash -= abs(total_qty) * avg_fill_price + total_fee
+                    else:
+                        self.state.cash += abs(total_qty) * avg_fill_price - total_fee
+                    self.state.qty = max(0.0, self.state.qty + total_qty)
+                else:  # futures
+                    # Close existing position if reversing
+                    if abs(self.state.qty) > 1e-12:
+                        if (total_qty > 0 and self.state.qty < 0) or (total_qty < 0 and self.state.qty > 0):
+                            realized_pnl = float(self.state.qty * (avg_fill_price - self.state.entry_price))
+                            self.state.cash += realized_pnl
+                            self.state.qty = 0.0
+                            self.state.entry_price = 0.0
+
+                    # Update position
+                    if abs(total_qty) > 1e-12:
+                        if abs(self.state.qty) <= 1e-12:
+                            self.state.qty = total_qty
+                            self.state.entry_price = avg_fill_price
+                        else:
+                            # Weighted average entry price
+                            prev_qty = self.state.qty
+                            prev_entry = self.state.entry_price
+                            new_qty = self.state.qty + total_qty
+                            denom = abs(prev_qty) + abs(total_qty)
+                            if denom > 1e-12:
+                                self.state.entry_price = (prev_entry * abs(prev_qty) + avg_fill_price * abs(total_qty)) / denom
+                            self.state.qty = new_qty
+
+                    self.state.cash -= total_fee
+
+                self.state.fee_total += total_fee
+                self.pos_sync.set_local(LivePosition(qty=float(self.state.qty), entry_price=float(self.state.entry_price)))
+
+                equity_after = self._equity(price)
+                self.state.peak_equity = max(self.state.peak_equity, float(equity_after))
+
+                side_str = "BUY" if total_qty > 0 else "SELL"
+                if self.market_type == "futures" and abs(total_qty) > 0 and abs(self.state.qty) <= 1e-12:
+                    side_str = "CLOSE"
+
+                return {
+                    "open_time_ms": int(open_time_ms),
+                    "side": side_str,
+                    "qty": float(total_qty),
+                    "fill_price": float(avg_fill_price),
+                    "notional": abs(total_qty) * float(avg_fill_price),
+                    "fee": float(total_fee),
+                    "slippage_cost": abs(avg_fill_price - price) * abs(total_qty),
+                    "realized_pnl": float(realized_pnl),
+                    "reason": "strategy",
+                    "cash_after": float(self.state.cash),
+                    "position_qty_after": float(self.state.qty),
+                    "entry_price_after": float(self.state.entry_price),
+                    "equity_after": float(equity_after),
+                    "order_id": ack.order_id,
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to execute order via broker: {e}", exc_info=True)
+            return None
+
+        return None
+
     # -----------------
     # Main loop
     # -----------------
@@ -670,6 +914,13 @@ class LiveRunner:
             except Exception:
                 pass
 
+            # Close broker connection if demo mode
+            if self.broker is not None:
+                try:
+                    self.broker.close()
+                except Exception:
+                    pass
+
             final_equity = self._equity(float(self._closes[-1]) if self._closes else 0.0)
             metrics = {
                 "final_equity": float(final_equity),
@@ -681,12 +932,18 @@ class LiveRunner:
             }
             self._finalize_session(status=status, final_equity=final_equity, metrics=metrics)
 
-            (self.run_dir / "live_trades.json").write_text(
-                json.dumps(trades_out, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
-            (self.run_dir / "live_metrics.json").write_text(
-                json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            try:
+                (self.run_dir / "live_trades.json").write_text(
+                    json.dumps(trades_out, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+            except OSError as e:
+                logger.error(f"Failed to write live_trades.json: {e}")
+            try:
+                (self.run_dir / "live_metrics.json").write_text(
+                    json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+            except OSError as e:
+                logger.error(f"Failed to write live_metrics.json: {e}")
 
         return {
             "status": status,

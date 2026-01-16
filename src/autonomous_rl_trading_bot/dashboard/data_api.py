@@ -136,3 +136,44 @@ class DashboardDataAPI:
         with _connect(self.db_path) as conn:
             rows = conn.execute(sql, (backtest_id,)).fetchall()
         return pd.DataFrame([dict(r) for r in rows])
+
+    # ─────────────────────────────────────────────────────────────
+    # Live trading data
+    # ─────────────────────────────────────────────────────────────
+    def live_equity(self, run_dir: Optional[Path]) -> pd.DataFrame:
+        """Load live equity CSV."""
+        if not run_dir:
+            return pd.DataFrame()
+        equity_path = run_dir / "equity.csv"
+        if not equity_path.exists():
+            return pd.DataFrame()
+        try:
+            return pd.read_csv(equity_path)
+        except Exception:
+            return pd.DataFrame()
+
+    def live_trades(self, run_dir: Optional[Path]) -> pd.DataFrame:
+        """Load live trades CSV."""
+        if not run_dir:
+            return pd.DataFrame()
+        trades_path = run_dir / "trades.csv"
+        if not trades_path.exists():
+            return pd.DataFrame()
+        try:
+            return pd.read_csv(trades_path)
+        except Exception:
+            return pd.DataFrame()
+
+    def live_metrics(self, run_dir: Optional[Path]) -> Dict[str, Any]:
+        """Load live metrics JSON."""
+        if not run_dir:
+            return {}
+        metrics_path = run_dir / "metrics.json"
+        if not metrics_path.exists():
+            return {}
+        try:
+            import json
+
+            return json.loads(metrics_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}

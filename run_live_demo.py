@@ -52,6 +52,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="stop after N minutes wall-clock",
     )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        default=False,
+        help="Enable Binance Demo trading (requires BINANCE_DEMO_API_KEY and BINANCE_DEMO_API_SECRET)",
+    )
     args = parser.parse_args(argv)
 
     ensure_artifact_tree()
@@ -184,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         db_path=str(db_path),
         run_id=run_id,
         run_dir=str(run_dir),
+        demo=bool(args.demo),
     )
 
     logger.info("Step 7 live runner starting")

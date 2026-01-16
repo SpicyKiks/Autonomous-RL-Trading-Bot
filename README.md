@@ -31,6 +31,17 @@ python -m autonomous_rl_trading_bot live -- --config configs/base.yaml
 python -m autonomous_rl_trading_bot dashboard -- --config configs/base.yaml
 ```
 
+## Desktop App (Windows)
+
+Run the dashboard as a native Windows desktop application:
+
+```powershell
+pip install -e .
+python app_desktop.py
+```
+
+This opens a native desktop window with the dashboard. The server runs locally and trading keys remain server-side only.
+
 **Notes:**
 - `arbt` is an alias for `python -m autonomous_rl_trading_bot` (after `pip install -e .`)
 - Use `--` to forward arguments to underlying runners (e.g., `backtest -- --help`)

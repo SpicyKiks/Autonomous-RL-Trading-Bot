@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from autonomous_rl_trading_bot.version import __version__
 
@@ -126,12 +127,20 @@ def main(argv=None) -> int:
         return int(backtest_main(remainder))
 
     if args.command == "live":
-        from autonomous_rl_trading_bot.live.main import main as live_main
-        return int(live_main(remainder))
+        # Add project root to path to import run_live_demo
+        project_root = Path(__file__).parent.parent.parent
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        import run_live_demo
+        return int(run_live_demo.main(remainder))
 
     if args.command == "dashboard":
-        from autonomous_rl_trading_bot.dashboard.app import main as dashboard_main
-        return int(dashboard_main())
+        # Add project root to path to import run_dashboard
+        project_root = Path(__file__).parent.parent.parent
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        import run_dashboard
+        return int(run_dashboard.main(remainder))
 
     if args.command == "baselines":
         from autonomous_rl_trading_bot.evaluation.baselines import main as baselines_main

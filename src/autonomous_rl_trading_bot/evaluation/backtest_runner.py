@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 
+from autonomous_rl_trading_bot.common.hashing import dataset_hash as compute_dataset_hash
 from autonomous_rl_trading_bot.common.logging import get_logger
 from autonomous_rl_trading_bot.common.paths import artifacts_dir
 from autonomous_rl_trading_bot.evaluation.backtester import (
@@ -16,6 +17,10 @@ from autonomous_rl_trading_bot.evaluation.backtester import (
     run_spot_backtest,
 )
 from autonomous_rl_trading_bot.evaluation.baselines import Strategy, make_strategy
+from autonomous_rl_trading_bot.evaluation.reporting import (
+    build_repro_payload,
+    generate_run_report,
+)
 
 log = get_logger("arbt")
 
@@ -168,7 +173,8 @@ def _try_load_sb3_model(policy_path: Path):
     errors: List[str] = []
     for cls in (PPO, A2C, DQN, SAC, TD3):
         try:
-            return cls.load(str(policy_path))
+            # Use CPU for MLP policies (faster and avoids GPU warning)
+            return cls.load(str(policy_path), device="cpu")
         except Exception as e:
             errors.append(f"{cls.__name__}: {e}")
     raise ValueError(
@@ -200,6 +206,30 @@ class SB3PolicyStrategy(Strategy):
     def __init__(self, model: Any, obs_matrix: np.ndarray):
         self._model = model
         self._obs = obs_matrix
+        
+        # Get lookback from model's observation space
+        # TradingEnv uses (lookback, n_features) shape
+        obs_space = model.observation_space
+        if hasattr(obs_space, 'shape') and len(obs_space.shape) == 2:
+            # Shape is (lookback, n_features)
+            self._lookback = int(obs_space.shape[0])
+            self._n_features = int(obs_space.shape[1])
+        else:
+            # Fallback: try to infer from observation space or use default
+            # If it's a flattened Box, we need to infer lookback from data
+            if hasattr(obs_space, 'shape') and len(obs_space.shape) == 1:
+                # Flattened: might be (lookback * n_features + account_dim,)
+                # Try to infer from obs_matrix shape
+                if obs_matrix.ndim == 2:
+                    self._lookback = 30  # default
+                    self._n_features = int(obs_matrix.shape[1]) if obs_matrix.shape[1] > 0 else 1
+                else:
+                    self._lookback = 30
+                    self._n_features = 1
+            else:
+                # Default fallback
+                self._lookback = 30
+                self._n_features = int(obs_matrix.shape[1]) if obs_matrix.ndim == 2 and obs_matrix.shape[1] > 0 else 1
 
     def act(self, t: int, price: float) -> int:
         if t < 0:
@@ -207,7 +237,50 @@ class SB3PolicyStrategy(Strategy):
         if t >= len(self._obs):
             t = len(self._obs) - 1
 
-        obs_in = np.asarray(self._obs[t], dtype=np.float32).reshape(1, -1)
+        # Build lookback window similar to TradingEnv._get_obs()
+        lb = self._lookback
+        t0 = max(t - lb + 1, 0)
+        t1 = t + 1
+        
+        # Extract window from observation matrix
+        if self._obs.ndim == 2:
+            # obs_matrix is (n_timesteps, n_features)
+            window = self._obs[t0:t1]
+        else:
+            # obs_matrix is 1D, reshape to (n_timesteps, 1)
+            window = self._obs[t0:t1].reshape(-1, 1)
+        
+        # Pad at the top if needed (when t < lookback-1)
+        if window.shape[0] < lb:
+            pad_shape = (lb - window.shape[0], window.shape[1] if window.ndim == 2 else 1)
+            pad = np.zeros(pad_shape, dtype=np.float32)
+            if window.ndim == 2:
+                window = np.vstack([pad, window])
+            else:
+                window = np.concatenate([pad.reshape(-1), window])
+                window = window.reshape(-1, 1)
+        
+        # Ensure correct shape: (lookback, n_features)
+        if window.ndim == 1:
+            window = window.reshape(-1, 1)
+        if window.shape[0] != lb:
+            # Trim or pad to exact lookback size
+            if window.shape[0] > lb:
+                window = window[-lb:]
+            else:
+                pad = np.zeros((lb - window.shape[0], window.shape[1]), dtype=np.float32)
+                window = np.vstack([pad, window])
+        
+        obs_in = window.astype(np.float32, copy=False)
+        
+        # Validate shape matches observation space
+        expected_shape = (self._lookback, self._n_features)
+        if obs_in.shape != expected_shape:
+            raise ValueError(
+                f"Observation shape mismatch: got {obs_in.shape}, expected {expected_shape}. "
+                f"Model observation_space: {self._model.observation_space}"
+            )
+        
         action, _ = self._model.predict(obs_in, deterministic=True)
 
         a = action
@@ -325,6 +398,26 @@ def run_backtest(
 
         finished_utc = _utc_iso()
 
+        # Compute dataset hash for reproducibility
+        ds_hash = compute_dataset_hash(dataset_meta, length=10)
+        
+        # Build reproducibility payload
+        seed = int(dataset_meta.get("seed", 1337))
+        repro = build_repro_payload(
+            seed=seed,
+            dataset_id=dataset_id,
+            dataset_hash=ds_hash,
+            kind="backtest",
+            run_id=resolved_run_id,
+            mode=mode,
+            config_hash=None,
+            extra={
+                "policy": policy,
+                "strategy_used": strategy_used,
+                "params": params,
+            },
+        )
+
         run_json = {
             **run_input,
             "finished_utc": finished_utc,
@@ -336,6 +429,17 @@ def run_backtest(
             "trade_rows": trade_rows,
         }
         _write_json(out_dir / "run.json", run_json)
+
+        # Generate reporting artifacts (same as training)
+        title = f"Backtest: {strategy_used} on {dataset_id}"
+        generate_run_report(
+            out_dir=out_dir,
+            title=title,
+            equity_rows=equity_rows,
+            trades_rows=trade_rows,
+            metrics=metrics.to_dict(),
+            repro=repro,
+        )
 
         return {
             "run_id": resolved_run_id,
