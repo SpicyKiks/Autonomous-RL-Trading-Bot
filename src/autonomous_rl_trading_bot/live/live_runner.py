@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,6 +16,7 @@ from autonomous_rl_trading_bot.common.db import connect
 from autonomous_rl_trading_bot.common.timeframes import interval_to_ms
 from autonomous_rl_trading_bot.common.types import OrderQtyUnit
 from autonomous_rl_trading_bot.data.candles_store import insert_candles
+from autonomous_rl_trading_bot.data.exchange_client import to_ccxt_symbol
 from autonomous_rl_trading_bot.evaluation.baselines import Strategy, make_strategy
 from autonomous_rl_trading_bot.exchange.binance_public import Candle
 from autonomous_rl_trading_bot.live.candle_sync import CandleSync, CandleSyncConfig
@@ -304,6 +305,38 @@ class LiveRunner:
                     base_url_demo=base_url_demo,
                     leverage=rcfg.futures_leverage,
                 )
+            
+            # Assert private access works (fail fast if auth fails)
+            if self.broker:
+                self.broker.assert_private_access()
+            
+            # Log market constraints in demo mode (one-time startup log)
+            if self.broker and hasattr(self.broker, "_get_exchange"):
+                try:
+                    import logging
+                    ex = self.broker._get_exchange()
+                    sym_ccxt = to_ccxt_symbol(rcfg.symbol)
+                    if hasattr(ex, "market"):
+                        market = ex.market(sym_ccxt)
+                    elif hasattr(ex, "markets") and sym_ccxt in ex.markets:
+                        market = ex.markets[sym_ccxt]
+                    else:
+                        market = None
+                    
+                    if market:
+                        logger = logging.getLogger("arbt")
+                        amount_prec = market.get("precision", {}).get("amount", "unknown")
+                        min_amt = market.get("limits", {}).get("amount", {}).get("min", "unknown")
+                        min_cost = market.get("limits", {}).get("cost", {}).get("min", "unknown")
+                        logger.info(
+                            f"Demo market constraints for {sym_ccxt}: "
+                            f"amount_precision={amount_prec}, min_amount={min_amt}, min_cost={min_cost}"
+                        )
+                except Exception as e:
+                    # Non-fatal: just log warning
+                    import logging
+                    logger = logging.getLogger("arbt")
+                    logger.debug(f"Failed to log market constraints: {e}")
 
         self.pos_sync = PositionSync(
             broker=self.broker,
@@ -711,14 +744,14 @@ class LiveRunner:
 
         logger = logging.getLogger("arbt")
 
-        # Get current position from broker
-        broker_pos = self.pos_sync.sync_from_broker()
-        current_qty = broker_pos.qty if broker_pos else 0.0
+        # In demo mode, use internal state for position tracking
+        # Binance Demo doesn't support fetch_positions() endpoints
+        current_qty = self.state.qty
 
         # Determine qty_unit based on market type
         qty_unit: OrderQtyUnit = "base" if self.market_type == "spot" else "contracts"
 
-        # Create order request
+        # Create order request based on internal state
         order_req = order_for_target_fraction(
             symbol=self.rcfg.symbol,
             current_qty=current_qty,
@@ -733,6 +766,33 @@ class LiveRunner:
         if order_req is None:
             return None  # No order needed
 
+        # Normalize order quantity to respect exchange limits
+        if self.broker and hasattr(self.broker, "normalize_amount"):
+            from decimal import Decimal
+            normalized_qty_decimal, norm_error = self.broker.normalize_amount(
+                symbol=self.rcfg.symbol,
+                amount=order_req.qty,
+                price=price
+            )
+            if norm_error:
+                logger.warning(f"Order skipped (below exchange minimums): {norm_error} (computed qty={order_req.qty})")
+                return None
+            if normalized_qty_decimal is None:
+                logger.warning(f"Order skipped: normalize_amount returned None (computed qty={order_req.qty})")
+                return None
+            
+            # Convert Decimal to float for order_req (OrderRequest expects float)
+            normalized_qty = float(normalized_qty_decimal)
+            
+            if abs(normalized_qty - order_req.qty) > 1e-12:
+                logger.info(f"Order qty normalized: {order_req.qty} -> {normalized_qty}")
+                # Use replace() since order_req is a frozen dataclass
+                order_req = replace(order_req, qty=normalized_qty)
+            # Ensure normalized qty is valid
+            if normalized_qty <= 0:
+                logger.warning(f"Order skipped: normalized qty <= 0: {normalized_qty}")
+                return None
+
         # Submit order via broker
         try:
             ack = self.broker.submit_order(order_req)
@@ -740,86 +800,113 @@ class LiveRunner:
                 logger.warning(f"Order rejected: {ack.reason}")
                 return None
 
-            # Wait for fills (poll briefly)
-            import time
-
-            time.sleep(0.5)  # Brief wait for order to fill
-            fills = list(self.broker.iter_fills())
-
-            # Process fills and update state
-            total_qty = 0.0
-            total_fee = 0.0
-            weighted_price = 0.0
+            # DEMO MODE: Assume order filled immediately at current price
+            # Binance Demo doesn't provide reliable fill confirmation endpoints
+            # Use order quantity and current price to update internal state
+            logger.info(f"DEMO: order submitted (order_id={ack.order_id}), assuming filled at price={price}")
+            
+            # Calculate fill details
+            order_qty = order_req.qty
+            if order_req.side == "sell":
+                order_qty = -order_qty  # Negative for sell
+            
+            # Apply slippage
+            slippage_rate = self.rcfg.slippage_bps / 10000.0
+            if order_qty > 0:  # Buy
+                fill_price = price * (1.0 + slippage_rate)
+            else:  # Sell
+                fill_price = price * (1.0 - slippage_rate)
+            
+            # Calculate fee
+            fee_rate = self.rcfg.fee_bps / 10000.0
+            notional = abs(order_qty) * fill_price
+            total_fee = notional * fee_rate
+            
+            # Update state immediately (assume filled)
+            total_qty = order_qty
+            avg_fill_price = fill_price
             realized_pnl = 0.0
 
-            for fill in fills:
-                if fill.order_id == ack.order_id:
-                    total_qty += fill.qty
-                    total_fee += fill.fee_paid
-                    weighted_price += fill.price * abs(fill.qty)
+            # Safety check: if order quantity is effectively zero, skip state update
+            if abs(total_qty) <= 1e-12:
+                logger.warning(f"DEMO: order quantity too small (qty={total_qty}), skipping state update")
+                return None
 
-            if abs(total_qty) > 1e-12:
-                avg_fill_price = weighted_price / abs(total_qty) if weighted_price > 0 else price
+            # Update state based on assumed fill
+            if self.market_type == "spot":
+                if total_qty > 0:
+                    self.state.cash -= abs(total_qty) * avg_fill_price + total_fee
+                else:
+                    self.state.cash += abs(total_qty) * avg_fill_price - total_fee
+                self.state.qty = max(0.0, self.state.qty + total_qty)
+            else:  # futures
+                # Close existing position if reversing
+                if abs(self.state.qty) > 1e-12:
+                    if (total_qty > 0 and self.state.qty < 0) or (total_qty < 0 and self.state.qty > 0):
+                        realized_pnl = float(self.state.qty * (avg_fill_price - self.state.entry_price))
+                        self.state.cash += realized_pnl
+                        self.state.qty = 0.0
+                        self.state.entry_price = 0.0
 
-                # Update state based on fills
-                if self.market_type == "spot":
-                    if total_qty > 0:
-                        self.state.cash -= abs(total_qty) * avg_fill_price + total_fee
+                # Update position
+                if abs(total_qty) > 1e-12:
+                    if abs(self.state.qty) <= 1e-12:
+                        self.state.qty = total_qty
+                        self.state.entry_price = avg_fill_price
                     else:
-                        self.state.cash += abs(total_qty) * avg_fill_price - total_fee
-                    self.state.qty = max(0.0, self.state.qty + total_qty)
-                else:  # futures
-                    # Close existing position if reversing
-                    if abs(self.state.qty) > 1e-12:
-                        if (total_qty > 0 and self.state.qty < 0) or (total_qty < 0 and self.state.qty > 0):
-                            realized_pnl = float(self.state.qty * (avg_fill_price - self.state.entry_price))
-                            self.state.cash += realized_pnl
-                            self.state.qty = 0.0
-                            self.state.entry_price = 0.0
+                        # Weighted average entry price
+                        prev_qty = self.state.qty
+                        prev_entry = self.state.entry_price
+                        new_qty = self.state.qty + total_qty
+                        denom = abs(prev_qty) + abs(total_qty)
+                        if denom > 1e-12:
+                            self.state.entry_price = (prev_entry * abs(prev_qty) + avg_fill_price * abs(total_qty)) / denom
+                        self.state.qty = new_qty
 
-                    # Update position
-                    if abs(total_qty) > 1e-12:
-                        if abs(self.state.qty) <= 1e-12:
-                            self.state.qty = total_qty
-                            self.state.entry_price = avg_fill_price
-                        else:
-                            # Weighted average entry price
-                            prev_qty = self.state.qty
-                            prev_entry = self.state.entry_price
-                            new_qty = self.state.qty + total_qty
-                            denom = abs(prev_qty) + abs(total_qty)
-                            if denom > 1e-12:
-                                self.state.entry_price = (prev_entry * abs(prev_qty) + avg_fill_price * abs(total_qty)) / denom
-                            self.state.qty = new_qty
+                self.state.cash -= total_fee
 
-                    self.state.cash -= total_fee
+            self.state.fee_total += total_fee
+            self.state.slippage_total += abs(avg_fill_price - price) * abs(total_qty)
+            self.pos_sync.set_local(LivePosition(qty=float(self.state.qty), entry_price=float(self.state.entry_price)))
 
-                self.state.fee_total += total_fee
-                self.pos_sync.set_local(LivePosition(qty=float(self.state.qty), entry_price=float(self.state.entry_price)))
+            equity_after = self._equity(price)
+            self.state.peak_equity = max(self.state.peak_equity, float(equity_after))
 
-                equity_after = self._equity(price)
-                self.state.peak_equity = max(self.state.peak_equity, float(equity_after))
-
-                side_str = "BUY" if total_qty > 0 else "SELL"
-                if self.market_type == "futures" and abs(total_qty) > 0 and abs(self.state.qty) <= 1e-12:
+            # Determine side: check if we're closing a position (going from non-zero to zero)
+            side_str = "BUY" if total_qty > 0 else "SELL"
+            if self.market_type == "futures":
+                # Check if position is being closed (was non-zero, now zero)
+                if abs(self.state.qty) <= 1e-12 and abs(realized_pnl) > 1e-12:
                     side_str = "CLOSE"
+                # Or if we're reversing position (sign change)
+                elif abs(total_qty) > 1e-12:
+                    # Check if we had a position and are reversing it
+                    prev_qty_before_update = self.state.qty - total_qty
+                    if abs(prev_qty_before_update) > 1e-12 and math.copysign(1.0, prev_qty_before_update) != math.copysign(1.0, total_qty):
+                        # Position reversed - the closing part is handled by realized_pnl
+                        pass
 
-                return {
-                    "open_time_ms": int(open_time_ms),
-                    "side": side_str,
-                    "qty": float(total_qty),
-                    "fill_price": float(avg_fill_price),
-                    "notional": abs(total_qty) * float(avg_fill_price),
-                    "fee": float(total_fee),
-                    "slippage_cost": abs(avg_fill_price - price) * abs(total_qty),
-                    "realized_pnl": float(realized_pnl),
-                    "reason": "strategy",
-                    "cash_after": float(self.state.cash),
-                    "position_qty_after": float(self.state.qty),
-                    "entry_price_after": float(self.state.entry_price),
-                    "equity_after": float(equity_after),
-                    "order_id": ack.order_id,
-                }
+            # Create trade record - this will be persisted and written to CSV
+            trade_record = {
+                "open_time_ms": int(open_time_ms),
+                "side": side_str,
+                "qty": float(total_qty),
+                "fill_price": float(avg_fill_price),
+                "notional": abs(total_qty) * float(avg_fill_price),
+                "fee": float(total_fee),
+                "slippage_cost": abs(avg_fill_price - price) * abs(total_qty),
+                "realized_pnl": float(realized_pnl),
+                "reason": "strategy",
+                "cash_after": float(self.state.cash),
+                "position_qty_after": float(self.state.qty),
+                "entry_price_after": float(self.state.entry_price),
+                "equity_after": float(equity_after),
+                "order_id": ack.order_id,  # Include order_id from demo order
+            }
+            
+            logger.info(f"DEMO: trade recorded: side={side_str} qty={total_qty} price={avg_fill_price} order_id={ack.order_id}")
+            
+            return trade_record
 
         except Exception as e:
             logger.error(f"Failed to execute order via broker: {e}", exc_info=True)
@@ -932,6 +1019,125 @@ class LiveRunner:
             }
             self._finalize_session(status=status, final_equity=final_equity, metrics=metrics)
 
+            # Always write artifacts (even with zero trades)
+            from autonomous_rl_trading_bot.evaluation.reporting import write_trades_csv, write_equity_csv
+            import csv
+            
+            # Collect equity rows from database
+            equity_rows = []
+            with connect(Path(self.rcfg.db_path)) as conn:
+                cursor = conn.execute(
+                    """
+                    SELECT open_time_ms, equity, drawdown, exposure
+                    FROM live_equity
+                    WHERE live_id = ?
+                    ORDER BY open_time_ms
+                    """,
+                    (self.rcfg.run_id,),
+                )
+                for row in cursor:
+                    equity_rows.append({
+                        "open_time_ms": row[0],
+                        "equity": row[1],
+                        "drawdown": row[2],
+                        "exposure": row[3],
+                    })
+            
+            # Always write trades.csv (with header even if empty)
+            trades_csv_path = self.run_dir / "trades.csv"
+            if trades_out:
+                # Convert trades to CSV format
+                trades_csv_rows = []
+                for i, trade in enumerate(trades_out):
+                    trades_csv_rows.append({
+                        "trade_id": i + 1,
+                        "open_time_ms": trade.get("open_time_ms", 0),
+                        "side": trade.get("side", ""),
+                        "qty_base": trade.get("qty", 0.0),
+                        "price": trade.get("fill_price", 0.0),
+                        "notional": trade.get("notional", 0.0),
+                        "fee": trade.get("fee", 0.0),
+                        "slippage_cost": trade.get("slippage_cost", 0.0),
+                        "realized_pnl": trade.get("realized_pnl", 0.0),
+                        "reason": trade.get("reason", "strategy"),
+                        "order_id": trade.get("order_id", ""),  # Include order_id for demo orders
+                    })
+                write_trades_csv(trades_csv_path, trades_csv_rows)
+            else:
+                # Write header-only CSV
+                trades_csv_path.parent.mkdir(parents=True, exist_ok=True)
+                with trades_csv_path.open("w", newline="", encoding="utf-8") as f:
+                    w = csv.DictWriter(f, fieldnames=["trade_id", "open_time_ms", "side", "qty_base", "price", "notional", "fee", "slippage_cost", "realized_pnl", "reason", "order_id"])
+                    w.writeheader()
+            
+            # Always write equity.csv (at least one row if empty)
+            equity_csv_path = self.run_dir / "equity.csv"
+            if equity_rows:
+                write_equity_csv(equity_csv_path, equity_rows)
+            else:
+                # Write header with at least one row (initial equity)
+                equity_csv_path.parent.mkdir(parents=True, exist_ok=True)
+                with equity_csv_path.open("w", newline="", encoding="utf-8") as f:
+                    w = csv.DictWriter(f, fieldnames=["open_time_ms", "equity", "drawdown", "exposure"])
+                    w.writeheader()
+                    w.writerow({
+                        "open_time_ms": int(self._open_times[0]) if self._open_times else _now_ms(),
+                        "equity": float(self.rcfg.initial_equity),
+                        "drawdown": 0.0,
+                        "exposure": 0.0,
+                    })
+            
+            # Always write metrics files
+            try:
+                (self.run_dir / "metrics.json").write_text(
+                    json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+            except OSError as e:
+                logger.error(f"Failed to write metrics.json: {e}")
+            
+            # Write metrics.md
+            metrics_md_path = self.run_dir / "metrics.md"
+            try:
+                metrics_md_path.parent.mkdir(parents=True, exist_ok=True)
+                with metrics_md_path.open("w", encoding="utf-8") as f:
+                    f.write("# Live Trading Metrics\n\n")
+                    f.write(f"- **Final Equity**: {metrics.get('final_equity', 0.0):.2f}\n")
+                    f.write(f"- **Peak Equity**: {metrics.get('peak_equity', 0.0):.2f}\n")
+                    f.write(f"- **Trade Count**: {metrics.get('trade_count', 0)}\n")
+                    f.write(f"- **Total Fees**: {metrics.get('fee_total', 0.0):.2f}\n")
+                    f.write(f"- **Total Slippage**: {metrics.get('slippage_total', 0.0):.2f}\n")
+                    f.write(f"- **Stop Reason**: {metrics.get('stop_reason', 'unknown')}\n")
+            except OSError as e:
+                logger.error(f"Failed to write metrics.md: {e}")
+            
+            # Write run.json and run_output.json
+            try:
+                run_json = {
+                    "run_id": self.rcfg.run_id,
+                    "mode": self.market_type,
+                    "symbol": self.rcfg.symbol,
+                    "interval": self.rcfg.interval,
+                    "status": status,
+                    "stop_reason": stop_reason,
+                    "final_equity": float(final_equity),
+                    "trade_count": len(trades_out),
+                }
+                (self.run_dir / "run.json").write_text(
+                    json.dumps(run_json, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+                (self.run_dir / "run_output.json").write_text(
+                    json.dumps({
+                        "status": status,
+                        "stop_reason": stop_reason,
+                        "trade_count": len(trades_out),
+                        "final_equity": float(final_equity),
+                        "run_id": self.rcfg.run_id,
+                    }, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+            except OSError as e:
+                logger.error(f"Failed to write run.json/run_output.json: {e}")
+            
+            # Also write live_trades.json and live_metrics.json for compatibility
             try:
                 (self.run_dir / "live_trades.json").write_text(
                     json.dumps(trades_out, indent=2, ensure_ascii=False), encoding="utf-8"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import traceback
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -29,7 +30,10 @@ class LiveSession:
     run_id: Optional[str] = None
     run_dir: Optional[Path] = None
     last_error: Optional[str] = None
+    last_error_traceback: Optional[str] = None
     log_lines: list[str] = None
+    last_start_clicks: int = 0
+    last_stop_clicks: int = 0
 
     def __post_init__(self):
         if self.log_lines is None:
@@ -43,7 +47,10 @@ class LiveSession:
         self.run_id = None
         self.run_dir = None
         self.last_error = None
+        self.last_error_traceback = None
         self.log_lines = []
+        self.last_start_clicks = 0
+        self.last_stop_clicks = 0
 
 
 # Global singleton instance
@@ -59,8 +66,11 @@ def start_trading(args_list: list[str], run_id: str, run_dir: Path) -> None:
     """Start live trading in background thread."""
     session = get_session()
 
+    # Guard: prevent multiple simultaneous starts
     if session.status == SessionStatus.RUNNING:
         raise RuntimeError("Trading session already running. Stop it first.")
+    if session.status == SessionStatus.STOPPING:
+        raise RuntimeError("Trading session is stopping. Wait for it to finish.")
 
     session.status = SessionStatus.RUNNING
     session.run_id = run_id
@@ -99,10 +109,14 @@ def start_trading(args_list: list[str], run_id: str, run_dir: Path) -> None:
             finally:
                 logger.removeHandler(handler)
 
-            session.status = SessionStatus.IDLE
+            # Only set to IDLE if we're still in RUNNING or STOPPING state
+            # (don't override ERROR state)
+            if session.status in (SessionStatus.RUNNING, SessionStatus.STOPPING):
+                session.status = SessionStatus.IDLE
         except Exception as e:
             session.status = SessionStatus.ERROR
             session.last_error = str(e)
+            session.last_error_traceback = traceback.format_exc()
             logger.error(f"Live trading error: {e}", exc_info=True)
 
     session.thread = threading.Thread(target=_run_trading, daemon=True, name="LiveTradingThread")
@@ -129,8 +143,6 @@ def stop_trading() -> None:
     if session.stop_event:
         session.stop_event.set()
 
-    # Wait for thread to finish (with timeout)
-    if session.thread and session.thread.is_alive():
-        session.thread.join(timeout=5.0)
-
-    session.status = SessionStatus.IDLE
+    # Don't wait for thread - let it check kill switch and exit naturally
+    # The thread will set status to IDLE when it finishes
+    # Keep status as STOPPING until thread finishes

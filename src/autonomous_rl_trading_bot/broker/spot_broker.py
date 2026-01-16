@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Iterable, Optional
 
@@ -53,34 +54,112 @@ class SpotBroker(BrokerAdapter):
             self._require_network()
             try:
                 import ccxt
+                import logging
             except ImportError as e:
                 raise RuntimeError("ccxt is required for exchange execution. Install: pip install ccxt") from e
 
             try:
                 exchange_class = getattr(ccxt, self.exchange_id)
                 params = {"enableRateLimit": True}
-                if self.api_key:
-                    params["apiKey"] = self.api_key
-                if self.api_secret:
-                    params["secret"] = self.api_secret
+                # For spot demo, ensure defaultType is spot (or leave default)
+                if self.demo:
+                    params["options"] = {"defaultType": "spot"}
+                    # Read demo credentials from env vars
+                    demo_key = os.getenv("BINANCE_DEMO_API_KEY", "").strip()
+                    demo_secret = os.getenv("BINANCE_DEMO_API_SECRET", "").strip()
+                    # Use env vars if provided, otherwise fall back to passed-in values
+                    api_key_final = demo_key if demo_key else (self.api_key or "")
+                    api_secret_final = demo_secret if demo_secret else (self.api_secret or "")
+                else:
+                    api_key_final = self.api_key or ""
+                    api_secret_final = self.api_secret or ""
+
+                if api_key_final:
+                    params["apiKey"] = api_key_final
+                if api_secret_final:
+                    params["secret"] = api_secret_final
 
                 ex = exchange_class(params)
+                
+                # Explicitly assign credentials (ensure they're attached)
+                if api_key_final:
+                    ex.apiKey = api_key_final
+                if api_secret_final:
+                    ex.secret = api_secret_final
+                
+                # Log credential status (never log full keys/secrets)
+                logger = logging.getLogger("arbt")
+                api_key_len = len(ex.apiKey or "") if hasattr(ex, "apiKey") else 0
+                api_key_last4 = (ex.apiKey[-4:] if (hasattr(ex, "apiKey") and ex.apiKey and len(ex.apiKey) >= 4) else "NONE")
+                has_secret = bool(ex.secret if hasattr(ex, "secret") else False)
+                logger.info(f"apiKey_len={api_key_len} apiKey_last4={api_key_last4} has_secret={has_secret}")
 
-                # Prefer CCXT sandbox mode
-                if hasattr(ex, "set_sandbox_mode"):
-                    ex.set_sandbox_mode(self.demo)
-
-                # Optional explicit testnet REST base override
+                # For Binance Demo, manually set URLs (CCXT's sandbox uses testnet, not demo)
                 if self.demo and self.base_url_demo:
                     try:
-                        ex.urls["api"] = {"public": self.base_url_demo, "private": self.base_url_demo}
+                        # CRITICAL: Disable currency fetching BEFORE any load_markets() call
+                        # Demo API doesn't support sapi/v1/capital/config/getall
+                        ex.options["fetchCurrencies"] = False
+                        if hasattr(ex, "has"):
+                            ex.has["fetchCurrencies"] = False
+
+                        # Update URLs dictionary instead of replacing it (preserve CCXT's endpoint structure)
+                        if "api" not in ex.urls:
+                            ex.urls["api"] = {}
+                        
+                        # Use base hosts only - CCXT will append paths automatically
+                        base_demo = self.base_url_demo.rstrip("/")
+                        
+                        # Update spot-specific endpoints
+                        ex.urls["api"].update({
+                            "public": base_demo,
+                            "private": base_demo,
+                        })
+                        
+                        # Disable sapi endpoints in demo mode (not supported)
+                        # Delete any production sapi endpoints to prevent leakage
+                        # Since fetchCurrencies is disabled, these won't be called anyway
+                        sapi_keys_to_remove = ["sapi", "sapiV1", "sapiV2", "sapiV3", "sapiV4"]
+                        for key in sapi_keys_to_remove:
+                            ex.urls["api"].pop(key, None)
+                        
+                        # Mark as sandbox/demo mode for logging purposes
+                        if hasattr(ex, "sandbox"):
+                            ex.sandbox = True
                     except Exception:
                         pass
+                elif self.demo:
+                    # If no base_url_demo provided, use CCXT's sandbox mode (testnet)
+                    if hasattr(ex, "set_sandbox_mode"):
+                        ex.set_sandbox_mode(True)
+                    # Still disable currency fetching for testnet
+                    ex.options["fetchCurrencies"] = False
+                    if hasattr(ex, "has"):
+                        ex.has["fetchCurrencies"] = False
 
+                # Load markets (currency fetching is disabled in demo mode)
                 try:
                     ex.load_markets()
                 except Exception:
                     pass
+
+                # Log exchange configuration
+                logger = logging.getLogger("arbt")
+                default_type = ex.options.get("defaultType", "N/A")
+                fetch_currencies = ex.options.get("fetchCurrencies", "N/A")
+                has_fetch_currencies = ex.has.get("fetchCurrencies", "N/A") if hasattr(ex, "has") else "N/A"
+                api_urls = ex.urls.get("api", {})
+                # Log subset of relevant URLs
+                url_subset = {
+                    k: api_urls.get(k, "N/A")
+                    for k in ["public", "private", "sapi"]
+                    if k in api_urls
+                }
+                logger.info(
+                    f"exchange init: demo={self.demo} defaultType={default_type} "
+                    f"fetchCurrencies={fetch_currencies} has_fetchCurrencies={has_fetch_currencies} "
+                    f"urls={url_subset}"
+                )
 
                 self._exchange = ex
             except Exception as e:
@@ -156,8 +235,22 @@ class SpotBroker(BrokerAdapter):
                 return OrderAck(order_id="", status="rejected", reason="no_price_for_quote_conversion")
             amount = amount / last
 
+        params = {}
+        
+        # CRITICAL: Never pass 'option' as a param key - CCXT uses ex.options for exchange options
+        # Validate params before sending
+        if "option" in params:
+            logger = logging.getLogger("arbt")
+            logger.error(f"Invalid 'option' key found in params: {params}")
+            return OrderAck(order_id="", status="rejected", reason="invalid parameter 'option' in order params")
+        
+        # Log sanitized params for debugging
+        logger = logging.getLogger("arbt")
+        sanitized_params = {k: v for k, v in params.items() if k != "apiKey" and k != "secret"}
+        logger.debug(f"Order params (sanitized): {list(sanitized_params.keys())}")
+
         try:
-            result = ex.create_market_order(symbol_ccxt, side_str, amount)
+            result = ex.create_market_order(symbol_ccxt, side_str, amount, params=params)
             return OrderAck(order_id=str(result.get("id", "")), status="filled")
         except Exception as e:
             return OrderAck(order_id="", status="rejected", reason=str(e))
@@ -185,6 +278,29 @@ class SpotBroker(BrokerAdapter):
                 fee_paid=float(fee.get("cost", 0.0) or 0.0),
                 fee_asset=str(fee.get("currency", "USDT")),
             )
+
+    def assert_private_access(self) -> None:
+        """Verify private API access works (demo mode auth check)."""
+        if not self.demo:
+            return  # Only check in demo mode
+        
+        self._require_network()
+        ex = self._get_exchange()
+        logger = logging.getLogger("arbt")
+        
+        try:
+            # Try fetch_balance for spot (minimal private endpoint)
+            ex.fetch_balance()
+        except Exception as e:
+            error_str = str(e)
+            # Check for -2015 auth error
+            if "-2015" in error_str or "Invalid API-key" in error_str or "Invalid Api-Key" in error_str:
+                api_key_last4 = (ex.apiKey[-4:] if (hasattr(ex, "apiKey") and ex.apiKey and len(ex.apiKey) >= 4) else "NONE")
+                raise RuntimeError(
+                    f"Demo auth failed (-2015). Check key/secret pair, IP restriction, and that broker attached credentials to CCXT exchange. apiKey_last4={api_key_last4}"
+                ) from e
+            # Re-raise other errors
+            raise
 
     def close(self) -> None:
         if self._exchange is not None:

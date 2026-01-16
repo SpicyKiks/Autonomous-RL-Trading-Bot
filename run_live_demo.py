@@ -16,7 +16,8 @@ from autonomous_rl_trading_bot.live.live_runner import LiveRunner, LiveRunnerCon
 
 
 def _utc_ts() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    """Generate UTC timestamp with microseconds for uniqueness."""
+    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
 
 def _make_run_id(mode: str, cfg_hash: str, symbol: str, interval: str) -> str:
@@ -95,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run_id = _make_run_id(mode, cfg_hash, symbol, interval)
     run_dir = artifacts_dir() / "runs" / run_id
-    run_dir.mkdir(parents=True, exist_ok=False)
+    run_dir.mkdir(parents=True, exist_ok=True)  # Idempotent: allow existing directory
 
     log_level = (cfg.get("logging", {}) or {}).get("level", "INFO")
     log_console = bool((cfg.get("logging", {}) or {}).get("console", True))

@@ -9,13 +9,6 @@ def make_layout(db_path_str: str) -> html.Div:
     return html.Div(
         [
             html.H2("Autonomous RL Trading Bot — Dashboard"),
-            html.Div(
-                [
-                    html.Div("DB:", style={"fontWeight": "bold", "marginRight": "8px"}),
-                    html.Code(db_path_str),
-                ],
-                style={"marginBottom": "10px"},
-            ),
 
             dcc.Interval(id="tick", interval=4000, n_intervals=0),  # 4 seconds default refresh
 
@@ -239,8 +232,6 @@ def make_layout(db_path_str: str) -> html.Div:
                                 ],
                                 style={"marginBottom": "12px"},
                             ),
-
-                            html.Div(id="live-error", style={"color": "red", "marginBottom": "12px"}),
 
                             html.H4("Live Trading Data"),
                             html.Div(

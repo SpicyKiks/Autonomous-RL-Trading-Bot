@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import traceback
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -121,7 +122,6 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
     # ─────────────────────────────────────────────────────────────
     @app.callback(
         Output("live-status", "children"),
-        Output("live-error", "children"),
         Output("live-start-btn", "disabled"),
         Output("live-stop-btn", "disabled"),
         Input("live-start-btn", "n_clicks"),
@@ -152,60 +152,86 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
         max_minutes: Optional[float],
     ):
         session = get_session()
-        error_msg = ""
 
-        # Handle stop button
-        if stop_clicks > 0:
+        # Track button clicks to prevent duplicate processing
+        # Only process if clicks have increased (button was actually clicked)
+        stop_clicked = stop_clicks > session.last_stop_clicks
+        start_clicked = start_clicks > session.last_start_clicks
+        
+        # Update tracked click counts
+        if stop_clicked:
+            session.last_stop_clicks = stop_clicks
+        if start_clicked:
+            session.last_start_clicks = start_clicks
+
+        # Handle stop button FIRST (prevents stop from being ignored if start is also clicked)
+        if stop_clicked:
             try:
                 stop_trading()
+                # After stopping, don't process start button on same callback
+                start_clicked = False
             except Exception as e:
-                error_msg = f"Error stopping: {e}"
+                pass  # Silently ignore errors
 
-        # Handle start button
-        if start_clicks > 0 and session.status == SessionStatus.IDLE:
-            try:
-                # Build args list for run_live_demo.main()
-                args_list = []
-                if mode:
-                    args_list.extend(["--mode", mode])
-                if symbol:
-                    args_list.extend(["--symbol", symbol])
-                if interval:
-                    args_list.extend(["--interval", interval])
-                if "demo" in demo:
-                    args_list.append("--demo")
-                if policy:
-                    args_list.extend(["--policy", policy])
-                if policy == "baseline" and strategy:
-                    args_list.extend(["--strategy", strategy])
-                if policy == "sb3" and sb3_model_path:
-                    args_list.extend(["--sb3_model_path", sb3_model_path])
-                if max_steps:
-                    args_list.extend(["--max_steps", str(int(max_steps))])
-                if max_minutes:
-                    args_list.extend(["--max_minutes", str(float(max_minutes))])
+        # Handle start button (only if not stopped in this callback)
+        if start_clicked:
+            # Guard: only start if session is IDLE
+            if session.status != SessionStatus.IDLE:
+                pass  # Silently ignore if already running
+            else:
+                try:
+                    # Build args list for run_live_demo.main()
+                    args_list = []
+                    if mode:
+                        args_list.extend(["--mode", mode])
+                    if symbol:
+                        args_list.extend(["--symbol", symbol])
+                    if interval:
+                        args_list.extend(["--interval", interval])
+                    if "demo" in demo:
+                        args_list.append("--demo")
+                    if policy:
+                        args_list.extend(["--policy", policy])
+                    if policy == "baseline" and strategy:
+                        args_list.extend(["--strategy", strategy])
+                    if policy == "sb3" and sb3_model_path:
+                        args_list.extend(["--sb3_model_path", sb3_model_path])
+                    if max_steps:
+                        args_list.extend(["--max_steps", str(int(max_steps))])
+                    if max_minutes:
+                        args_list.extend(["--max_minutes", str(float(max_minutes))])
 
-                # Generate run_id and run_dir (mimic run_live_demo logic)
-                from datetime import datetime, timezone
-                from autonomous_rl_trading_bot.common.paths import artifacts_dir
-                from autonomous_rl_trading_bot.common.hashing import short_hash
-                from autonomous_rl_trading_bot.common.config import load_config
+                    # Generate unique run_id and run_dir (mimic run_live_demo logic)
+                    from datetime import datetime, timezone
+                    import logging
+                    from autonomous_rl_trading_bot.common.paths import artifacts_dir
+                    from autonomous_rl_trading_bot.common.hashing import short_hash
+                    from autonomous_rl_trading_bot.common.config import load_config
 
-                loaded = load_config(mode=mode)
-                cfg_hash = loaded.config_hash
-                symbol_upper = (symbol or "BTCUSDT").upper()
-                interval_str = (interval or "1m").strip()
-                tag = f"{symbol_upper}_{interval_str}"
-                utc_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-                run_id = f"{utc_ts}_{mode}_live_{tag}_{short_hash(cfg_hash, 10)}"
-                run_dir = artifacts_dir() / "runs" / run_id
-                run_dir.mkdir(parents=True, exist_ok=False)  # Should not exist yet
+                    loaded = load_config(mode=mode)
+                    cfg_hash = loaded.config_hash
+                    symbol_upper = (symbol or "BTCUSDT").upper()
+                    interval_str = (interval or "1m").strip()
+                    tag = f"{symbol_upper}_{interval_str}"
+                    # Include microseconds to ensure uniqueness even with rapid clicks
+                    now = datetime.now(timezone.utc)
+                    utc_ts = now.strftime("%Y%m%d_%H%M%S_%f")  # Add microseconds
+                    run_id = f"{utc_ts}_{mode}_live_{tag}_{short_hash(cfg_hash, 10)}"
+                    run_dir = artifacts_dir() / "runs" / run_id
+                    
+                    # Idempotent directory creation (exist_ok=True)
+                    run_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Log run start
+                    logger = logging.getLogger("arbt")
+                    logger.info(f"Starting live run_id={run_id} artifacts_dir={run_dir}")
 
-                start_trading(args_list, run_id, run_dir)
-            except Exception as e:
-                error_msg = f"Error starting: {e}"
-                session.status = SessionStatus.ERROR
-                session.last_error = str(e)
+                    start_trading(args_list, run_id, run_dir)
+                except Exception as e:
+                    import traceback
+                    session.status = SessionStatus.ERROR
+                    session.last_error = str(e)
+                    session.last_error_traceback = traceback.format_exc()
 
         # Update status display
         status_text = f"Status: {session.status.value}"
@@ -213,10 +239,10 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
             status_text += f" | Run ID: {session.run_id}"
 
         # Button states
-        start_disabled = session.status == SessionStatus.RUNNING
-        stop_disabled = session.status != SessionStatus.RUNNING
+        start_disabled = session.status in (SessionStatus.RUNNING, SessionStatus.STOPPING)
+        stop_disabled = session.status not in (SessionStatus.RUNNING, SessionStatus.STOPPING)
 
-        return status_text, error_msg, start_disabled, stop_disabled
+        return status_text, start_disabled, stop_disabled
 
     # ─────────────────────────────────────────────────────────────
     # Live trading: display data (equity, trades, logs)
@@ -231,14 +257,15 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
     def _live_trading_data(_: int):
         session = get_session()
 
+        # Show data when RUNNING or STOPPING, and run_dir is set
         if session.status == SessionStatus.IDLE or not session.run_dir:
             fig = go.Figure()
             fig.update_layout(title="No active trading session")
             return [], fig, make_table(table_id="live-trades-table", df=pd.DataFrame(), page_size=12), "No logs"
 
-        # Load data
-        eq = api.live_equity(session.run_dir)
-        tr = api.live_trades(session.run_dir)
+        # Load data (pass run_id to read from database during active run)
+        eq = api.live_equity(session.run_dir, run_id=session.run_id)
+        tr = api.live_trades(session.run_dir, run_id=session.run_id)
         metrics = api.live_metrics(session.run_dir)
 
         # Cards

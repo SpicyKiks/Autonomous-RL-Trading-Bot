@@ -15,15 +15,29 @@ def _truthy(name: str) -> bool:
 
 
 def make_binance_futures_ccxt(*, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> Any:
-    # USD-M futures (most common)
-    ex = ccxt.binanceusdm(
-        {
-            "enableRateLimit": True,
-            "apiKey": api_key or os.getenv("BINANCE_API_KEY", ""),
-            "secret": api_secret or os.getenv("BINANCE_API_SECRET", ""),
-        }
-    )
     use_testnet = _truthy("USE_TESTNET")
+    
+    # For testnet/demo, use binance() with defaultType=future (binanceusdm doesn't support sandbox)
+    # For production, use binanceusdm for better compatibility
+    if use_testnet:
+        ex = ccxt.binance(
+            {
+                "enableRateLimit": True,
+                "apiKey": api_key or os.getenv("BINANCE_API_KEY", ""),
+                "secret": api_secret or os.getenv("BINANCE_API_SECRET", ""),
+                "options": {"defaultType": "future"},
+            }
+        )
+    else:
+        # USD-M futures (most common) for production
+        ex = ccxt.binanceusdm(
+            {
+                "enableRateLimit": True,
+                "apiKey": api_key or os.getenv("BINANCE_API_KEY", ""),
+                "secret": api_secret or os.getenv("BINANCE_API_SECRET", ""),
+            }
+        )
+    
     if hasattr(ex, "set_sandbox_mode"):
         ex.set_sandbox_mode(use_testnet)
     return ex

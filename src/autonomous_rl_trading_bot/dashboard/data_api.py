@@ -140,29 +140,83 @@ class DashboardDataAPI:
     # ─────────────────────────────────────────────────────────────
     # Live trading data
     # ─────────────────────────────────────────────────────────────
-    def live_equity(self, run_dir: Optional[Path]) -> pd.DataFrame:
-        """Load live equity CSV."""
+    def live_equity(self, run_dir: Optional[Path], run_id: Optional[str] = None) -> pd.DataFrame:
+        """Load live equity from CSV (if exists) or database (during run)."""
         if not run_dir:
             return pd.DataFrame()
+        
+        # Try CSV first (written at end of run)
         equity_path = run_dir / "equity.csv"
-        if not equity_path.exists():
-            return pd.DataFrame()
-        try:
-            return pd.read_csv(equity_path)
-        except Exception:
-            return pd.DataFrame()
+        if equity_path.exists():
+            try:
+                return pd.read_csv(equity_path)
+            except Exception:
+                pass
+        
+        # If CSV doesn't exist, read from database (during active run)
+        if run_id:
+            try:
+                with _connect(self.db_path) as conn:
+                    rows = conn.execute(
+                        """
+                        SELECT open_time_ms, equity, drawdown, exposure
+                        FROM live_equity
+                        WHERE live_id = ?
+                        ORDER BY open_time_ms ASC
+                        """,
+                        (run_id,),
+                    ).fetchall()
+                if rows:
+                    return pd.DataFrame([dict(r) for r in rows])
+            except Exception:
+                pass
+        
+        return pd.DataFrame()
 
-    def live_trades(self, run_dir: Optional[Path]) -> pd.DataFrame:
-        """Load live trades CSV."""
+    def live_trades(self, run_dir: Optional[Path], run_id: Optional[str] = None) -> pd.DataFrame:
+        """Load live trades from CSV (if exists) or database (during run)."""
         if not run_dir:
             return pd.DataFrame()
+        
+        # Try CSV first (written at end of run)
         trades_path = run_dir / "trades.csv"
-        if not trades_path.exists():
-            return pd.DataFrame()
-        try:
-            return pd.read_csv(trades_path)
-        except Exception:
-            return pd.DataFrame()
+        if trades_path.exists():
+            try:
+                return pd.read_csv(trades_path)
+            except Exception:
+                pass
+        
+        # If CSV doesn't exist, read from database (during active run)
+        if run_id:
+            try:
+                with _connect(self.db_path) as conn:
+                    rows = conn.execute(
+                        """
+                        SELECT 
+                            open_time_ms,
+                            side,
+                            qty as qty_base,
+                            fill_price as price,
+                            notional,
+                            fee,
+                            slippage_cost,
+                            realized_pnl,
+                            reason
+                        FROM live_trades
+                        WHERE live_id = ?
+                        ORDER BY open_time_ms ASC
+                        """,
+                        (run_id,),
+                    ).fetchall()
+                if rows:
+                    df = pd.DataFrame([dict(r) for r in rows])
+                    # Add trade_id column for compatibility
+                    df.insert(0, "trade_id", range(1, len(df) + 1))
+                    return df
+            except Exception:
+                pass
+        
+        return pd.DataFrame()
 
     def live_metrics(self, run_dir: Optional[Path]) -> Dict[str, Any]:
         """Load live metrics JSON."""
