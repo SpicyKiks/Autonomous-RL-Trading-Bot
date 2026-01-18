@@ -1,0 +1,51 @@
+{
+  "total_return": -0.02884664431563355,
+  "sharpe": -0.17370330255583263,
+  "sortino": -0.14263073287524092,
+  "max_drawdown": 0.5144032288127458,
+  "calmar": -0.05607788345771517,
+  "num_trades": 29,
+  "win_rate": 0.034482758620689655,
+  "avg_trade_pnl": -8.959911929971618,
+  "avg_trade_net_pnl": -8.959911929971618,
+  "profit_factor": 0.05739829084791364,
+  "final_equity": 9711.533556843664,
+  "initial_equity": 10000.0,
+  "total_fees": 228.91406684530045,
+  "total_slippage": 28.61531078564256,
+  "policy": "ppo",
+  "baselines": {
+    "buy_and_hold": {
+      "total_return": -1.000213391454539,
+      "sharpe": -6.882520672783483,
+      "sortino": -3.385851795894259,
+      "max_drawdown": 1.0032500509973048,
+      "calmar": -0.9969731777837967,
+      "num_trades": 0,
+      "win_rate": 0.0,
+      "avg_trade_pnl": 0.0,
+      "avg_trade_net_pnl": 0.0,
+      "profit_factor": 0.0,
+      "final_equity": -2.133914545390665,
+      "initial_equity": 10000.0,
+      "total_fees": 0.0,
+      "total_slippage": 0.0
+    },
+    "sma_crossover": {
+      "total_return": -0.009116834043022437,
+      "sharpe": -0.001279931140143405,
+      "sortino": -0.0007572953177876352,
+      "max_drawdown": 1.0019000075366702,
+      "calmar": -0.009099544839247598,
+      "num_trades": 7,
+      "win_rate": 0.2857142857142857,
+      "avg_trade_pnl": -9.044574590699561,
+      "avg_trade_net_pnl": -9.044574590699561,
+      "profit_factor": 0.060891423370153304,
+      "final_equity": 9908.831659569776,
+      "initial_equity": 10000.0,
+      "total_fees": 0.0,
+      "total_slippage": 0.0
+    }
+  }
+}

@@ -117,21 +117,41 @@ def run_baselines(
     mode: str,
     out_csv: Optional[str],
     strategies: List[Strategy],
+    symbol: Optional[str] = None,
+    interval: Optional[str] = None,
 ) -> int:
     """
-    Loads dataset (via rl.dataset.Dataset) and outputs a CSV of positions for each baseline.
+    Loads dataset (via rl.dataset.Dataset or parquet) and outputs a CSV of positions for each baseline.
     This is intentionally lightweight and independent from the RL trainer.
 
     If you want it to run backtests, integrate with evaluation.backtester.py later.
     """
-    from autonomous_rl_trading_bot.rl.dataset import Dataset  # local import to avoid circulars
+    # Try to load from parquet if symbol/interval provided
+    if symbol and interval:
+        from pathlib import Path
+        import pandas as pd
+        
+        dataset_path = Path(f"data/processed/{symbol.upper()}_{interval}_dataset.parquet")
+        if dataset_path.exists():
+            df = pd.read_parquet(dataset_path)
+            # Ensure 'close' column exists (may be named differently)
+            if "close" not in df.columns:
+                if "Close" in df.columns:
+                    df = df.rename(columns={"Close": "close"})
+                else:
+                    raise ValueError(f"Dataset missing 'close' column. Available: {list(df.columns)}")
+        else:
+            raise FileNotFoundError(f"Dataset not found: {dataset_path}. Run scripts/make_dataset.py first.")
+    else:
+        # Use legacy Dataset.load() path
+        from autonomous_rl_trading_bot.rl.dataset import Dataset  # local import to avoid circulars
 
-    if dataset_id is None:
-        # try to use "latest" dataset by scanning artifacts/datasets
-        dataset_id = _find_latest_dataset_id(mode=mode)
+        if dataset_id is None:
+            # try to use "latest" dataset by scanning artifacts/datasets
+            dataset_id = _find_latest_dataset_id(mode=mode)
 
-    ds = Dataset.load(dataset_id, market_type=mode, split="full")
-    df = ds.to_dataframe()
+        ds = Dataset.load(dataset_id, market_type=mode, split="full")
+        df = ds.to_dataframe()
 
     # normalize expected cols
     if "close" not in df.columns and "Close" in df.columns:
@@ -157,7 +177,9 @@ def run_baselines(
 def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(prog="arbt baselines", description="Run baseline strategies on a dataset.")
     p.add_argument("--mode", choices=["spot", "futures"], default="spot", help="market mode (default: spot)")
-    p.add_argument("--dataset-id", default=None, help="dataset id under artifacts/datasets (default: latest)")
+    p.add_argument("--dataset-id", default=None, help="dataset id under artifacts/datasets (default: latest, or use --symbol/--interval)")
+    p.add_argument("--symbol", default=None, help="Trading symbol (e.g., BTCUSDT) - used with --interval if --dataset-id not provided")
+    p.add_argument("--interval", default=None, help="Timeframe interval (e.g., 1m) - used with --symbol if --dataset-id not provided")
     p.add_argument("--out", default=None, help="optional CSV output path")
 
     # choose strategies
@@ -169,6 +191,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--no-short", action="store_true", help="disable shorts (flat instead)")
 
     args = p.parse_args(argv)
+
+    # Resolve dataset_id from symbol/interval if provided
+    dataset_id = args.dataset_id
+    if not dataset_id and args.symbol and args.interval:
+        # Try to resolve from parquet dataset path
+        dataset_id = f"{args.symbol.upper()}_{args.interval}"
+    elif not dataset_id and (args.symbol or args.interval):
+        p.error("Both --symbol and --interval must be provided together if --dataset-id is not provided")
 
     allow_short = not args.no_short
 
@@ -184,10 +214,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         strategies.append(RSIReversion(allow_short=allow_short))
 
     return run_baselines(
-        dataset_id=args.dataset_id,
+        dataset_id=dataset_id,
         mode=args.mode,
         out_csv=args.out,
         strategies=strategies,
+        symbol=args.symbol,
+        interval=args.interval,
     )
 
 

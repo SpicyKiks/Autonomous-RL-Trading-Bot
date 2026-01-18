@@ -1,0 +1,13 @@
+{
+  "total_return": -0.022152345858814426,
+  "sharpe": -0.13657456854263392,
+  "max_drawdown": 0.511171029285007,
+  "trades": 26,
+  "win_rate": 0.16,
+  "avg_trade_pnl": -4.536358545659956,
+  "final_equity": 9778.476541411856,
+  "initial_equity": 10000.0,
+  "realized_pnl": -117.94532218715887,
+  "win_count": 4,
+  "loss_count": 21
+}

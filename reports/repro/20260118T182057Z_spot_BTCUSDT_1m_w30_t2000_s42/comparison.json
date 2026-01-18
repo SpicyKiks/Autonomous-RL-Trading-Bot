@@ -1,0 +1,36 @@
+{
+  "run_id": "20260118T182057Z_spot_BTCUSDT_1m_w30_t2000_s42",
+  "symbol": "BTCUSDT",
+  "interval": "1m",
+  "timesteps": 2000,
+  "seed": 42,
+  "ppo": {
+    "total_return": -0.02884664431563355,
+    "sharpe": -0.17370330255583263,
+    "sortino": -0.14263073287524092,
+    "max_drawdown": 0.5144032288127458,
+    "calmar": -0.05607788345771517,
+    "num_trades": 29,
+    "win_rate": 0.034482758620689655,
+    "avg_trade_pnl": -8.959911929971618,
+    "profit_factor": 0.05739829084791364,
+    "final_equity": 9711.533556843664
+  },
+  "sma": {
+    "total_return": -0.009116834043022437,
+    "sharpe": -0.001279931140143405,
+    "sortino": -0.0007572953177876352,
+    "max_drawdown": 1.0019000075366702,
+    "calmar": -0.009099544839247598,
+    "num_trades": 7,
+    "win_rate": 0.14285714285714285,
+    "avg_trade_pnl": -13.022456843272307,
+    "profit_factor": 0.0009792878135707337,
+    "final_equity": 9908.831659569776
+  },
+  "winner": "sma",
+  "ppo_advantage": {
+    "return_diff": -0.019729810272611115,
+    "sharpe_diff": -0.17242337141568922
+  }
+}

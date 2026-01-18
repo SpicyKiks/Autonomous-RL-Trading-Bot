@@ -12,7 +12,8 @@ from autonomous_rl_trading_bot.common.hashing import dataset_hash
 from autonomous_rl_trading_bot.common.logging import get_logger
 from autonomous_rl_trading_bot.evaluation.metrics import compute_metrics
 from autonomous_rl_trading_bot.evaluation.reporting import generate_run_report
-from autonomous_rl_trading_bot.repro.repro import build_repro_payload
+# Lazy import to avoid circular dependencies
+# from autonomous_rl_trading_bot.repro.repro import build_repro_payload
 from autonomous_rl_trading_bot.rl.dataset import Dataset
 from autonomous_rl_trading_bot.rl.env_trading import TradingEnv, TradingEnvConfig
 
@@ -365,21 +366,27 @@ def train_and_evaluate(
     )
 
     # --- repro payload ---
-    repro = build_repro_payload(
-        config=_asdict_dataclass(cfg),
-        extra={
-            "dataset_id": cfg.dataset_id,
-            "dataset_hash": ds_hash,
-            "metrics": metrics.to_dict() if hasattr(metrics, "to_dict") else metrics,
-        },
-    )
+    # Lazy import to avoid circular dependencies
+    try:
+        from autonomous_rl_trading_bot.repro.repro import build_repro_payload
+        repro = build_repro_payload(
+            config=_asdict_dataclass(cfg),
+            extra={
+                "dataset_id": cfg.dataset_id,
+                "dataset_hash": ds_hash,
+                "metrics": metrics.to_dict() if hasattr(metrics, "to_dict") else metrics,
+            },
+        )
+        write_json(run_dir / "repro.json", _json_serialize_paths(repro))
+    except ImportError:
+        # repro.repro module may not exist, skip repro payload
+        repro = {}
 
     # --- write artifacts ---
     cfg_dict = _asdict_dataclass(cfg)
     write_json(run_dir / "config.json", _json_serialize_paths(cfg_dict))
     write_json(run_dir / "dataset.json", {"dataset_id": cfg.dataset_id, "dataset_hash": ds_hash})
     write_json(run_dir / "metrics.json", metrics.to_dict() if hasattr(metrics, "to_dict") else metrics)
-    write_json(run_dir / "repro.json", _json_serialize_paths(repro))
 
     # Convert episode infos to equity_rows format for reporting
     equity_rows = [

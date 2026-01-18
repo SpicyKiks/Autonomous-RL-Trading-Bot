@@ -30,33 +30,184 @@ def _make_run_id(mode: str, dataset_id: str, algo: str, cfg_hash: str) -> str:
     return f"{_utc_ts()}_{mode}_train_{dataset_id}_{algo}_{short_hash(cfg_hash, 8)}"
 
 
+def _train_day2_parquet(
+    args: argparse.Namespace,
+    dataset_path: Path,
+    logger_info: Any,
+) -> int:
+    """Day-2 training pipeline using parquet dataset."""
+    from autonomous_rl_trading_bot.common.reproducibility import set_global_seed
+    from autonomous_rl_trading_bot.training.train_pipeline import (
+        load_dataset,
+        split_dataset,
+        train_ppo,
+        evaluate_ppo,
+    )
+    
+    # Set seed
+    seed = int(args.seed)
+    set_global_seed(seed)
+    
+    # Handle smoke test
+    timesteps = 2000 if args.smoke_test else int(args.timesteps)
+    train_split = 0.8 if args.smoke_test else float(args.train_split)
+    
+    # Convert legacy fee-bps to taker-fee if provided
+    taker_fee = float(args.taker_fee)
+    if args.fee_bps is not None:
+        taker_fee = float(args.fee_bps) / 10000.0
+    
+    # Load dataset
+    if logger_info:
+        logger_info(f"[Day-2] Loading dataset: {dataset_path}")
+    df = load_dataset(args.symbol, args.interval)
+    
+    # Smoke test: use smaller slice
+    if args.smoke_test and len(df) > 1000:
+        df = df.iloc[:1000].copy()
+        if logger_info:
+            logger_info(f"[Smoke test] Using first 1000 rows")
+    
+    # Split dataset
+    train_df, test_df = split_dataset(df, train_split=train_split)
+    
+    if logger_info:
+        logger_info(f"[Day-2] Dataset path: {dataset_path}")
+        logger_info(f"[Day-2] Train size: {len(train_df):,} rows")
+        logger_info(f"[Day-2] Test size: {len(test_df):,} rows")
+    
+    # Setup paths
+    run_id = f"{_utc_ts()}_day2_{args.symbol}_{args.interval}_seed{seed}"
+    tensorboard_log_dir = str(Path(args.tensorboard_dir) / run_id)
+    model_out = args.model_out
+    report_out = args.report_out
+    
+    if logger_info:
+        logger_info(f"[Day-2] Run ID: {run_id}")
+        logger_info(f"[Day-2] Model output: {model_out}")
+        logger_info(f"[Day-2] TensorBoard logs: {tensorboard_log_dir}")
+        logger_info(f"[Day-2] Report output: {report_out}")
+    
+    # Train
+    if logger_info:
+        logger_info(f"[Day-2] Training PPO for {timesteps:,} timesteps...")
+    
+    model_path = train_ppo(
+        train_df,
+        timesteps=timesteps,
+        seed=seed,
+        tensorboard_log_dir=tensorboard_log_dir,
+        model_out=model_out,
+        taker_fee=taker_fee,
+        slippage_bps=float(args.slippage_bps),
+        risk_penalty=float(args.risk_penalty),
+        position_fraction=float(args.position_fraction),
+    )
+    
+    # Save run_config.json with symbol/interval/dataset info
+    run_dir = Path(tensorboard_log_dir).parent
+    run_config_path = run_dir / "run_config.json"
+    run_config_path.parent.mkdir(parents=True, exist_ok=True)
+    run_config = {
+        "run_id": run_id,
+        "symbol": args.symbol,
+        "interval": args.interval,
+        "dataset_path": str(dataset_path),
+        "train_split": train_split,
+        "taker_fee": taker_fee,
+        "slippage_bps": float(args.slippage_bps),
+        "risk_penalty": float(args.risk_penalty),
+        "position_fraction": float(args.position_fraction),
+        "initial_balance": 10000.0,  # Default from TradingEnv
+        "seed": seed,
+        "model_path": model_path,
+    }
+    import json
+    with open(run_config_path, "w") as f:
+        json.dump(run_config, f, indent=2)
+    
+    if logger_info:
+        logger_info(f"[Day-2] Training complete. Model saved: {model_path}")
+    
+    # Evaluate
+    metrics = {}
+    if args.eval and not args.no_eval:
+        if logger_info:
+            logger_info(f"[Day-2] Evaluating on test set...")
+        
+        metrics = evaluate_ppo(
+            model_path,
+            test_df,
+            seed=seed,
+            taker_fee=taker_fee,
+            slippage_bps=float(args.slippage_bps),
+            risk_penalty=float(args.risk_penalty),
+            position_fraction=float(args.position_fraction),
+            report_out=report_out,
+        )
+        
+        if logger_info:
+            logger_info(f"[Day-2] Evaluation complete. Metrics:")
+            logger_info(f"  Total Return: {metrics.get('total_return', 0):.4f}")
+            logger_info(f"  Sharpe Ratio: {metrics.get('sharpe', 0):.4f}")
+            logger_info(f"  Max Drawdown: {metrics.get('max_drawdown', 0):.4f}")
+            logger_info(f"  Trades: {metrics.get('trades', 0)}")
+            logger_info(f"  Win Rate: {metrics.get('win_rate', 0):.4f}")
+            logger_info(f"  Avg Trade PnL: {metrics.get('avg_trade_pnl', 0):.4f}")
+    
+    print(f"OK: Day-2 training complete (run_id={run_id}, model={model_path}, metrics={report_out})")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Step 7: Offline RL training runner (SB3).")
     parser.add_argument("--mode", default=None, help="spot|futures. Overrides base.yaml.")
     parser.add_argument("--dataset-id", default=None, help="Dataset id under artifacts/datasets/ (default: latest for mode).")
+    parser.add_argument("--symbol", default="BTCUSDT", help="Trading symbol for Day-2 parquet dataset (e.g., BTCUSDT).")
+    parser.add_argument("--interval", default="1m", help="Timeframe for Day-2 parquet dataset (e.g., 1m).")
     parser.add_argument("--algo", default="ppo", help="ppo|dqn")
-    parser.add_argument("--timesteps", type=int, default=50_000, help="Total training timesteps.")
-    parser.add_argument("--lookback", type=int, default=30, help="Lookback window for observations.")
+    parser.add_argument("--timesteps", type=int, default=500_000, help="Total training timesteps.")
+    parser.add_argument("--lookback", type=int, default=30, help="Lookback window for observations (validation only for Day-2).")
     parser.add_argument(
         "--train-split",
-        default=None,
-        help="Dataset split for training: train|val|test (default: train from meta)",
+        type=float,
+        default=0.8,
+        help="Train split fraction (0.0-1.0) for Day-2 parquet, or train|val|test for legacy NPZ.",
     )
     parser.add_argument(
         "--eval-split",
         default=None,
-        help="Dataset split for evaluation: train|val|test (default: val from meta)",
+        help="Dataset split for evaluation: train|val|test (default: val from meta, legacy only)",
     )
-    parser.add_argument("--seed", type=int, default=None, help="Override seed (default from config).")
-    parser.add_argument("--fee-bps", type=float, default=10.0, help="Fee bps per trade.")
-    parser.add_argument("--slippage-bps", type=float, default=5.0, help="Slippage bps per trade.")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+    parser.add_argument("--taker-fee", type=float, default=0.0004, help="Taker fee rate (default 0.0004 = 0.04%).")
+    parser.add_argument("--slippage-bps", type=float, default=1.0, help="Slippage in basis points (default 1.0 bps = 0.01%).")
+    parser.add_argument("--risk-penalty", type=float, default=0.1, help="Risk penalty coefficient.")
     parser.add_argument("--position-fraction", type=float, default=1.0, help="Fraction of equity to size position.")
-    parser.add_argument("--futures-leverage", type=float, default=3.0, help="Leverage used for futures sizing.")
-    parser.add_argument("--reward", default="log_equity", help="log_equity|delta_equity")
+    parser.add_argument("--model-out", default="models/ppo_trader.zip", help="Output path for trained model.")
+    parser.add_argument("--tensorboard-dir", default="logs/tensorboard", help="Directory for TensorBoard logs.")
+    parser.add_argument("--report-out", default="reports/training_metrics.json", help="Output path for evaluation metrics.")
+    parser.add_argument("--eval", action="store_true", default=True, help="Run evaluation after training (default: True).")
+    parser.add_argument("--no-eval", action="store_true", help="Skip evaluation after training.")
+    parser.add_argument("--smoke-test", action="store_true", help="Run quick smoke test (2000 timesteps, smaller dataset).")
+    # Legacy args (kept for backward compatibility)
+    parser.add_argument("--fee-bps", type=float, default=None, help="[Legacy] Fee bps per trade (use --taker-fee instead).")
+    parser.add_argument("--futures-leverage", type=float, default=3.0, help="Leverage used for futures sizing (legacy).")
+    parser.add_argument("--reward", default="log_equity", help="log_equity|delta_equity (legacy).")
     args = parser.parse_args(argv)
 
     ensure_artifact_tree()
 
+    # Check if using Day-2 parquet dataset
+    use_day2_parquet = False
+    dataset_path = Path("data/processed") / f"{args.symbol.upper()}_{args.interval}_dataset.parquet"
+    
+    if dataset_path.exists():
+        use_day2_parquet = True
+        # Day-2 parquet path: use new training pipeline
+        return _train_day2_parquet(args, dataset_path, print)
+    
+    # Fall back to legacy NPZ dataset
     loaded = load_config(mode=args.mode)
     cfg = loaded.config
     cfg_hash = loaded.config_hash
@@ -77,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
 
     market_type = str(dataset.meta.get("market_type") or mode)
     dataset_id = dataset.dataset_id
+    
+    # Legacy NPZ path: continue with existing code
 
     algo = str(args.algo).strip().lower()
     if algo not in ("ppo", "dqn"):

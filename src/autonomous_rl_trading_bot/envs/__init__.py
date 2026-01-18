@@ -6,6 +6,8 @@ from .rewards import log_equity_return
 from .spot_env import SpotEnv, SpotEnvConfig
 from .futures_env import FuturesEnv, FuturesEnvConfig
 
+from .trading_env import TradingEnv, make_env_from_dataframe
+
 __all__ = [
     "TradingEnvBase",
     "apply_slippage",
@@ -15,5 +17,7 @@ __all__ = [
     "SpotEnvConfig",
     "FuturesEnv",
     "FuturesEnvConfig",
+    "TradingEnv",
+    "make_env_from_dataframe",
 ]
 

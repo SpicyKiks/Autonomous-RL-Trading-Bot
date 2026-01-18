@@ -19,7 +19,7 @@ class SB3FactoryConfig:
     tensorboard_log: Optional[str]
     seed: int = 0
     verbose: int = 1
-    device: str = "auto"
+    device: str = "cpu"  # Force CPU for MLP policies to avoid GPU warnings
     algo_params: Dict[str, Any] | None = None
 
 
@@ -31,13 +31,16 @@ def create_model(*, env: "VecEnv", cfg: SB3FactoryConfig):
     params = dict(cfg.algo_params or {})
     set_random_seed(int(cfg.seed))
 
+    # Force CPU if device is "auto" to avoid GPU warnings for MLP policies
+    device = "cpu" if cfg.device == "auto" else str(cfg.device)
+    
     common = dict(
         policy="MlpPolicy",
         env=env,
         verbose=int(cfg.verbose),
         tensorboard_log=cfg.tensorboard_log,
         seed=int(cfg.seed),
-        device=str(cfg.device),
+        device=device,
     )
 
     if algo == "ppo":

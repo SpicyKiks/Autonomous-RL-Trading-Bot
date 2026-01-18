@@ -1,0 +1,22 @@
+graph LR
+    A[Environment Reset] -->|obs, info| B[Agent Policy<br/>PPO Neural Network]
+    B -->|action| C[Environment Step]
+    C -->|Execute Trade| D{Trade Execution}
+    D -->|Apply Fees| E[Calculate Reward]
+    D -->|Apply Slippage| E
+    E -->|Update Equity| F[Mark-to-Market]
+    F -->|obs, reward, done, info| G{Episode Done?}
+    
+    G -->|No| B
+    G -->|Yes| H[Episode Metrics<br/>Total Return, Sharpe, etc.]
+    
+    H -->|Training| I[PPO Update<br/>Policy Gradient]
+    I -->|Next Episode| A
+    
+    H -->|Evaluation| J[Backtest Report<br/>Trades CSV, Equity Curve]
+    
+    style B fill:#fff4e1
+    style D fill:#e1f5ff
+    style E fill:#e8f5e9
+    style I fill:#f3e5f5
+    style J fill:#ffebee

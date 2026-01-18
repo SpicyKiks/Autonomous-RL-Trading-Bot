@@ -187,11 +187,11 @@ class _SB3Policy(_Policy):
             if self.algo == "ppo":
                 from stable_baselines3 import PPO  # type: ignore
 
-                self.model = PPO.load(self.model_path)
+                self.model = PPO.load(self.model_path, device="cpu")
             elif self.algo == "dqn":
                 from stable_baselines3 import DQN  # type: ignore
 
-                self.model = DQN.load(self.model_path)
+                self.model = DQN.load(self.model_path, device="cpu")
             else:
                 raise ValueError("sb3_algo must be ppo|dqn")
         except ModuleNotFoundError as e:

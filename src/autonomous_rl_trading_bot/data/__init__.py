@@ -60,6 +60,8 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+from .feature_engineering import compute_features, causal_zscore, build_state_windows
+
 __all__ = [
     "MarketType",
     "OhlcvBar",
@@ -77,4 +79,8 @@ __all__ = [
     "BinanceFuturesClient",  # Lazy import via __getattr__
     "get_binance_spot_client",
     "get_binance_futures_client",
+    # Feature engineering exports
+    "compute_features",
+    "causal_zscore",
+    "build_state_windows",
 ]

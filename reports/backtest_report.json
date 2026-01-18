@@ -1,0 +1,17 @@
+{
+  "total_return": -0.99994868997013,
+  "sharpe": -1.7240186263112907,
+  "sortino": -0.89469057304905,
+  "max_drawdown": 1.0032186378072743,
+  "calmar": -0.9967405431738277,
+  "num_trades": 1,
+  "win_rate": 0.0,
+  "avg_trade_pnl": -8.483156390924297,
+  "avg_trade_net_pnl": -8.483156390924297,
+  "profit_factor": 0.0,
+  "final_equity": 0.5131002987006461,
+  "initial_equity": 10000.0,
+  "total_fees": 7.996605379595469,
+  "total_slippage": 1.999151360024844,
+  "policy": "buyhold"
+}

@@ -1,43 +1,120 @@
 ﻿# Python
 __pycache__/
 *.py[cod]
-.venv/
-venv/
-env/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.ipynb_checkpoints/
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Project artifacts
-artifacts/
-*.db
-*.sqlite
-*.sqlite3
-
-# Build
-build/
-dist/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
 *.egg-info/
-
-# Logs
-*.log
+.eggs/
+pip-log.txt
+pip-delete-this-directory.txt
 
 # Virtual environments (NEVER commit)
 .venv/
 .venv_test/
 venv/
 env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Project artifacts (NEVER commit)
+artifacts/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.spec.bak
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+.pytest_cache/
+test-results/
+.coverage.*
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints
 
 # Environment variables (NEVER commit API keys)
 .env
 .env.local
 .env.*.local
+*.env
+*.key
+*.secret
+*.pem
+*.p12
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+.cache/
+
+# Archives (if large)
+*.zip
+*.tar.gz
+*.rar
+code_only.zip
+
+# Large data files
+*.csv
+*.parquet
+*.npz
+*.npy
+*.pkl
+*.joblib
+*.h5
+*.hdf5
+
+# Model files (if large)
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.pb
+
+# Documentation builds
+docs/_build/
+docs/.doctrees/
+
+# KILL_SWITCH file (runtime artifact)
+KILL_SWITCH

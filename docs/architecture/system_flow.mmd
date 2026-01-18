@@ -1,0 +1,25 @@
+graph TD
+    A[Market Data<br/>Binance API] -->|Download OHLCV| B[Raw Data<br/>data/raw/*.parquet]
+    B -->|Feature Engineering| C[Features<br/>data/processed/*_features.parquet]
+    C -->|Window + Normalize| D[Dataset<br/>data/processed/*_dataset.parquet]
+    
+    D -->|Train Split| E[Training Data]
+    D -->|Test Split| F[Test Data]
+    
+    E -->|PPO Training| G[RL Model<br/>models/*.zip]
+    G -->|TensorBoard Logs| H[Training Metrics<br/>logs/tensorboard/]
+    
+    F -->|Backtest PPO| I[PPO Backtest<br/>reports/backtest_report.json]
+    F -->|Backtest Baselines| J[SMA/BuyHold Backtest<br/>reports/backtest_report.json]
+    
+    I -->|Compare| K[Comparison Report<br/>reports/comparison.json]
+    J -->|Compare| K
+    
+    K -->|Visualize| L[Dashboard<br/>app_desktop.py]
+    G -->|Deploy| M[Live Trading<br/>arbt live]
+    
+    style A fill:#e1f5ff
+    style G fill:#fff4e1
+    style K fill:#e8f5e9
+    style L fill:#f3e5f5
+    style M fill:#ffebee
