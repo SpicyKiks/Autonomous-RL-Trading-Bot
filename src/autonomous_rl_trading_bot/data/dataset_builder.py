@@ -224,6 +224,24 @@ def compute_features(
         lr[1:] = np.log((c[1:] + eps) / (c[:-1] + eps))
         out["log_return"] = lr
 
+    # ATR (Average True Range) - requires high, low, close
+    if "atr" in features:
+        from autonomous_rl_trading_bot.features.indicators import atr
+        atr_values = atr(h, low, c, period=14)
+        out["atr"] = atr_values
+
+    # Volatility (rolling standard deviation of returns)
+    if "volatility" in features:
+        from autonomous_rl_trading_bot.features.indicators import volatility
+        vol_values = volatility(c, window=20)
+        out["volatility"] = vol_values
+
+    # Volume delta (change relative to rolling average)
+    if "volume_delta" in features:
+        from autonomous_rl_trading_bot.features.indicators import volume_delta
+        vol_delta_values = volume_delta(v, window=20)
+        out["volume_delta"] = vol_delta_values
+
     return out
 
 
@@ -264,6 +282,12 @@ def _build_feature_list(features: List[str], arrays: Dict[str, np.ndarray]) -> L
         feature_list.append("close_norm")
     if "volume" in arrays:
         feature_list.append("vol_norm")
+    if "atr" in arrays:
+        feature_list.append("atr_norm")
+    if "volatility" in arrays:
+        feature_list.append("volatility")
+    if "volume_delta" in arrays:
+        feature_list.append("volume_delta")
     
     if not feature_list:
         raise ValueError("No features available for feature_list")
@@ -291,6 +315,9 @@ def _prepare_scaled_features(
             feat = arrays["close"] / max(first_close, 1e-12)
         elif feat_name == "vol_norm":
             feat = np.log1p(np.maximum(arrays["volume"], 0.0))
+        elif feat_name == "atr_norm":
+            # Normalize ATR by close price
+            feat = arrays["atr"] / np.maximum(arrays["close"], 1e-12)
         else:
             if feat_name not in arrays:
                 raise KeyError(f"Feature {feat_name} not found in arrays")

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from autonomous_rl_trading_bot.common.timeframes import interval_to_ms
@@ -21,6 +23,7 @@ class CandleSyncConfig:
     # Binance returns the currently-forming candle; we only trade on CLOSED candles.
     # If `require_settled_ms` > 0, we additionally require now_ms >= close_time_ms + require_settled_ms.
     require_settled_ms: int = 250
+    kill_switch_path: str = ""  # Optional kill switch path to check during sleep
 
 
 class CandleSync:
@@ -61,7 +64,10 @@ class CandleSync:
         return self._select_latest_closed(candles)
 
     def wait_next(self) -> Candle:
-        """Block until a NEW closed candle is available, then return it."""
+        """Block until a NEW closed candle is available, then return it.
+        
+        Checks kill switch during sleep to respond to stop requests quickly.
+        """
         while True:
             c = self.poll_latest_closed()
             if c is not None:
@@ -69,7 +75,23 @@ class CandleSync:
                 if self._last_open_time_ms is None or ot > self._last_open_time_ms:
                     self._last_open_time_ms = ot
                     return c
-            time.sleep(float(self._c.poll_seconds))
+            
+            # Check kill switch during sleep (break sleep into chunks)
+            poll_sec = float(self._c.poll_seconds)
+            kill_switch_path = (self._c.kill_switch_path or "").strip()
+            if kill_switch_path:
+                # Sleep in small chunks and check kill switch
+                chunk_sec = min(0.5, poll_sec)  # Check every 0.5s max
+                elapsed = 0.0
+                while elapsed < poll_sec:
+                    time.sleep(chunk_sec)
+                    elapsed += chunk_sec
+                    # Check kill switch
+                    p = os.path.expandvars(kill_switch_path)
+                    if Path(p).exists():
+                        raise RuntimeError("Kill switch triggered during candle wait")
+            else:
+                time.sleep(poll_sec)
 
     def prime(self) -> Tuple[Candle, int]:
         """Wait for the most recent closed candle and prime internal cursor.

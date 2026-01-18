@@ -1,4 +1,0 @@
-$env:BINANCE_DEMO_API_KEY="T9LX8zVhxoN022OOv9H9ddZmbOHdnwwPdbNrvxrQm8lcXYVqkXincNYJ2Dulgxqv"
-$env:BINANCE_DEMO_API_SECRET="vULiQ9PAwk5RMv194kS59FQdBeWfNCbd3fT76Xfo8YIm47UO18GNe6Nka1stZSjm"
-$env:ALLOW_NETWORK="1"
-python app_desktop.py

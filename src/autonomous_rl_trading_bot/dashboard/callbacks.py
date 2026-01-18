@@ -153,6 +153,14 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
     ):
         session = get_session()
 
+        # Poll thread completion: check if thread finished and update status
+        if session.thread is not None:
+            if not session.thread.is_alive():
+                # Thread finished - update status to DONE if it was RUNNING/STOPPING
+                if session.status in (SessionStatus.RUNNING, SessionStatus.STOPPING):
+                    session.status = SessionStatus.DONE
+                    session.thread = None  # Clear thread reference
+
         # Track button clicks to prevent duplicate processing
         # Only process if clicks have increased (button was actually clicked)
         stop_clicked = stop_clicks > session.last_stop_clicks
@@ -175,9 +183,9 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
 
         # Handle start button (only if not stopped in this callback)
         if start_clicked:
-            # Guard: only start if session is IDLE
-            if session.status != SessionStatus.IDLE:
-                pass  # Silently ignore if already running
+            # Guard: only start if session is IDLE or DONE
+            if session.status not in (SessionStatus.IDLE, SessionStatus.DONE):
+                pass  # Silently ignore if already running or stopping
             else:
                 try:
                     # Build args list for run_live_demo.main()
@@ -240,7 +248,7 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
 
         # Button states
         start_disabled = session.status in (SessionStatus.RUNNING, SessionStatus.STOPPING)
-        stop_disabled = session.status not in (SessionStatus.RUNNING, SessionStatus.STOPPING)
+        stop_disabled = session.status not in (SessionStatus.RUNNING, SessionStatus.STOPPING, SessionStatus.DONE)
 
         return status_text, start_disabled, stop_disabled
 
@@ -257,7 +265,7 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
     def _live_trading_data(_: int):
         session = get_session()
 
-        # Show data when RUNNING or STOPPING, and run_dir is set
+        # Show data when RUNNING, STOPPING, DONE, or ERROR, and run_dir is set
         if session.status == SessionStatus.IDLE or not session.run_dir:
             fig = go.Figure()
             fig.update_layout(title="No active trading session")

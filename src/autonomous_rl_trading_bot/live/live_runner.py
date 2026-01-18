@@ -265,6 +265,7 @@ class LiveRunner:
                 interval=rcfg.interval,
                 poll_seconds=float(rcfg.poll_seconds),
                 require_settled_ms=int(rcfg.require_settled_ms),
+                kill_switch_path=rcfg.kill_switch_path,
             ),
         )
 
@@ -919,6 +920,9 @@ class LiveRunner:
     # -----------------
 
     def run(self, *, max_steps: Optional[int] = None, max_minutes: Optional[float] = None) -> Dict[str, Any]:
+        import logging
+        logger = logging.getLogger("arbt")
+        
         start_ms = _now_ms()
         trades_out: List[Dict[str, Any]] = []
         status = "DONE"
@@ -937,7 +941,14 @@ class LiveRunner:
                     stop_reason = "kill_switch"
                     break
 
-                candle = self.candle_sync.wait_next()
+                try:
+                    candle = self.candle_sync.wait_next()
+                except RuntimeError as e:
+                    # Kill switch triggered during wait_next() sleep
+                    if "Kill switch triggered" in str(e):
+                        stop_reason = "kill_switch"
+                        break
+                    raise
 
                 with connect(Path(self.rcfg.db_path)) as conn:
                     insert_candles(conn, [candle])

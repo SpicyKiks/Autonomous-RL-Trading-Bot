@@ -9,3 +9,6 @@ features:
     - "return"          # Simple returns: (p[t] / p[t-1]) - 1
     - "close_norm"      # Normalized close price (first close = 1.0)
     - "vol_norm"        # Normalized volume: log1p(volume)
+    - "atr"             # Average True Range (volatility measure, period=14)
+    - "volatility"      # Rolling volatility (std of returns, window=20)
+    - "volume_delta"    # Volume delta: change relative to rolling average (window=20)

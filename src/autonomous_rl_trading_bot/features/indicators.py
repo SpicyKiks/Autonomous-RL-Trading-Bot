@@ -89,3 +89,57 @@ def clip(values: np.ndarray, lower: float, upper: float) -> np.ndarray:
     """Clip values to [lower, upper]."""
     return np.clip(values, float(lower), float(upper))
 
+
+def atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
+    """Average True Range (ATR) - measures market volatility."""
+    if period < 1 or len(high) < period + 1:
+        return np.zeros_like(close)
+    if len(high) != len(low) or len(high) != len(close):
+        raise ValueError("high, low, close must have same length")
+    
+    # True Range: max(high-low, abs(high-close_prev), abs(low-close_prev))
+    tr = np.zeros_like(close)
+    tr[0] = high[0] - low[0]
+    for i in range(1, len(close)):
+        tr[i] = max(
+            high[i] - low[i],
+            abs(high[i] - close[i - 1]),
+            abs(low[i] - close[i - 1])
+        )
+    
+    # ATR is EMA of TR
+    return ema(tr, span=period)
+
+
+def volatility(prices: np.ndarray, window: int = 20) -> np.ndarray:
+    """Rolling volatility (standard deviation of returns)."""
+    if window < 1 or len(prices) < window + 1:
+        return np.zeros_like(prices)
+    
+    # Compute returns
+    ret = returns(prices)
+    
+    # Rolling standard deviation
+    result = np.zeros_like(prices)
+    for i in range(window - 1, len(ret)):
+        window_vals = ret[i - window + 1 : i + 1]
+        result[i] = np.std(window_vals)
+    
+    return result
+
+
+def volume_delta(volume: np.ndarray, window: int = 20) -> np.ndarray:
+    """Volume delta: change in volume relative to rolling average."""
+    if window < 1 or len(volume) < window:
+        return np.zeros_like(volume)
+    
+    # Rolling average volume
+    avg_volume = sma(volume, window)
+    
+    # Delta: (current - average) / average
+    result = np.zeros_like(volume)
+    for i in range(window - 1, len(volume)):
+        if avg_volume[i] > 1e-12:
+            result[i] = (volume[i] - avg_volume[i]) / avg_volume[i]
+    
+    return result

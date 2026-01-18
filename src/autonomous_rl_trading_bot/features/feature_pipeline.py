@@ -5,7 +5,13 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 
-from autonomous_rl_trading_bot.features.indicators import log_returns, returns
+from autonomous_rl_trading_bot.features.indicators import (
+    atr,
+    log_returns,
+    returns,
+    volatility,
+    volume_delta,
+)
 
 
 def compute_features(
@@ -36,6 +42,8 @@ def compute_features(
         column_names: List of feature names
     """
     close = candles[close_col].values.astype(np.float64)
+    high = candles[high_col].values.astype(np.float64)
+    low = candles[low_col].values.astype(np.float64)
     volume = candles[volume_col].values.astype(np.float64)
 
     # Compute features
@@ -49,9 +57,30 @@ def compute_features(
     # Normalized volume (log1p)
     vol_norm = np.log1p(np.maximum(volume, 0.0))
 
+    # ATR (Average True Range) - volatility measure
+    atr_values = atr(high, low, close, period=14)
+    # Normalize ATR by close price
+    atr_norm = atr_values / np.maximum(close, 1e-12)
+
+    # Volatility (rolling std of returns)
+    vol_values = volatility(close, window=20)
+
+    # Volume delta (change relative to rolling average)
+    vol_delta = volume_delta(volume, window=20)
+
     # Stack features
-    features = np.stack([log_ret, ret, close_norm, vol_norm], axis=1)
-    columns = ["log_return", "return", "close_norm", "vol_norm"]
+    features = np.stack(
+        [log_ret, ret, close_norm, vol_norm, atr_norm, vol_values, vol_delta], axis=1
+    )
+    columns = [
+        "log_return",
+        "return",
+        "close_norm",
+        "vol_norm",
+        "atr_norm",
+        "volatility",
+        "volume_delta",
+    ]
 
     return features.astype(np.float32), columns
 

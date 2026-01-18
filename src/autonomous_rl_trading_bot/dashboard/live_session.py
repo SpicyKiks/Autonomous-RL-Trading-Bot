@@ -17,6 +17,7 @@ class SessionStatus(Enum):
     IDLE = "IDLE"
     RUNNING = "RUNNING"
     STOPPING = "STOPPING"
+    DONE = "DONE"
     ERROR = "ERROR"
 
 
@@ -109,10 +110,10 @@ def start_trading(args_list: list[str], run_id: str, run_dir: Path) -> None:
             finally:
                 logger.removeHandler(handler)
 
-            # Only set to IDLE if we're still in RUNNING or STOPPING state
+            # Set to DONE when thread completes successfully
             # (don't override ERROR state)
             if session.status in (SessionStatus.RUNNING, SessionStatus.STOPPING):
-                session.status = SessionStatus.IDLE
+                session.status = SessionStatus.DONE
         except Exception as e:
             session.status = SessionStatus.ERROR
             session.last_error = str(e)
@@ -127,7 +128,7 @@ def stop_trading() -> None:
     """Stop live trading session."""
     session = get_session()
 
-    if session.status != SessionStatus.RUNNING:
+    if session.status not in (SessionStatus.RUNNING, SessionStatus.DONE):
         return
 
     session.status = SessionStatus.STOPPING
@@ -143,6 +144,8 @@ def stop_trading() -> None:
     if session.stop_event:
         session.stop_event.set()
 
-    # Don't wait for thread - let it check kill switch and exit naturally
-    # The thread will set status to IDLE when it finishes
-    # Keep status as STOPPING until thread finishes
+    # Try to join thread with timeout (non-blocking check)
+    if session.thread and session.thread.is_alive():
+        # Thread will check kill switch in next loop iteration
+        # Don't block here - let polling callback detect completion
+        pass
