@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -12,7 +11,7 @@ def save_features(
     name: str,
     X: np.ndarray,
     columns: list[str],
-    index_ts: Optional[np.ndarray] = None,
+    index_ts: np.ndarray | None = None,
 ) -> None:
     """
     Save feature matrix to disk.
@@ -34,7 +33,7 @@ def save_features(
     df.to_csv(run_dir / f"{name}_features.csv")
 
 
-def load_features(run_dir: Path, name: str) -> Tuple[np.ndarray, list[str], Optional[np.ndarray]]:
+def load_features(run_dir: Path, name: str) -> tuple[np.ndarray, list[str], np.ndarray | None]:
     """
     Load feature matrix from disk.
 

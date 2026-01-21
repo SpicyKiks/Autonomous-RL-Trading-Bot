@@ -3,10 +3,10 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, Union, Any
+from typing import Any
 
 
-def _to_level(level: Union[int, str, None]) -> int:
+def _to_level(level: int | str | None) -> int:
     if level is None:
         return logging.INFO
     if isinstance(level, int):
@@ -17,9 +17,9 @@ def _to_level(level: Union[int, str, None]) -> int:
 
 def configure_logging(
     name: str = "arbt",
-    log_dir: Optional[Union[str, Path]] = None,
-    log_file: Optional[str] = None,
-    level: Union[int, str, None] = "INFO",
+    log_dir: str | Path | None = None,
+    log_file: str | None = None,
+    level: int | str | None = "INFO",
     console: bool = True,
     file: bool = True,
     fmt: str = "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -71,7 +71,7 @@ def configure_logging(
     return logger
 
 
-def get_logger(name: str = "arbt", level: Union[int, str, None] = None) -> logging.Logger:
+def get_logger(name: str = "arbt", level: int | str | None = None) -> logging.Logger:
     """
     Backwards-compatible logger accessor used by older modules (e.g. trainer.py).
 

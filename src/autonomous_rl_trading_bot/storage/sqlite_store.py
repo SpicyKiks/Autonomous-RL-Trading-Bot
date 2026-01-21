@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 from autonomous_rl_trading_bot.storage.models import BacktestModel, RunModel, TrainJobModel
 
@@ -19,7 +18,7 @@ class SQLiteStore:
         conn.execute("PRAGMA foreign_keys = ON;")
         return conn
 
-    def list_runs(self, *, limit: int = 100, kind: Optional[str] = None) -> List[RunModel]:
+    def list_runs(self, *, limit: int = 100, kind: str | None = None) -> list[RunModel]:
         """List runs, optionally filtered by kind."""
         with self._connect() as conn:
             if kind:
@@ -34,13 +33,13 @@ class SQLiteStore:
                 ).fetchall()
             return [RunModel(**dict(row)) for row in rows]
 
-    def get_run(self, run_id: str) -> Optional[RunModel]:
+    def get_run(self, run_id: str) -> RunModel | None:
         """Get a single run by ID."""
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
             return RunModel(**dict(row)) if row else None
 
-    def list_backtests(self, *, limit: int = 100, market_type: Optional[str] = None) -> List[BacktestModel]:
+    def list_backtests(self, *, limit: int = 100, market_type: str | None = None) -> list[BacktestModel]:
         """List backtests, optionally filtered by market_type."""
         with self._connect() as conn:
             if market_type:
@@ -55,13 +54,13 @@ class SQLiteStore:
                 ).fetchall()
             return [BacktestModel(**dict(row)) for row in rows]
 
-    def get_backtest(self, backtest_id: str) -> Optional[BacktestModel]:
+    def get_backtest(self, backtest_id: str) -> BacktestModel | None:
         """Get a single backtest by ID."""
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM backtests WHERE backtest_id=?", (backtest_id,)).fetchone()
             return BacktestModel(**dict(row)) if row else None
 
-    def list_train_jobs(self, *, limit: int = 100, algo: Optional[str] = None) -> List[TrainJobModel]:
+    def list_train_jobs(self, *, limit: int = 100, algo: str | None = None) -> list[TrainJobModel]:
         """List train jobs, optionally filtered by algo."""
         with self._connect() as conn:
             if algo:
@@ -76,7 +75,7 @@ class SQLiteStore:
                 ).fetchall()
             return [TrainJobModel(**dict(row)) for row in rows]
 
-    def get_train_job(self, train_id: str) -> Optional[TrainJobModel]:
+    def get_train_job(self, train_id: str) -> TrainJobModel | None:
         """Get a single train job by ID."""
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM train_jobs WHERE train_id=?", (train_id,)).fetchone()

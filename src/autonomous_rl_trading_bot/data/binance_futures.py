@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 import ccxt
 
@@ -14,7 +14,7 @@ def _truthy(name: str) -> bool:
     return v in ("1", "true", "yes", "y", "on")
 
 
-def make_binance_futures_ccxt(*, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> Any:
+def make_binance_futures_ccxt(*, api_key: str | None = None, api_secret: str | None = None) -> Any:
     use_testnet = _truthy("USE_TESTNET")
     
     # For testnet/demo, use binance() with defaultType=future (binanceusdm doesn't support sandbox)
@@ -44,7 +44,7 @@ def make_binance_futures_ccxt(*, api_key: Optional[str] = None, api_secret: Opti
 
 
 class BinanceFuturesClient(CcxtClient):
-    def __init__(self, *, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> None:
+    def __init__(self, *, api_key: str | None = None, api_secret: str | None = None) -> None:
         super().__init__(
             exchange=make_binance_futures_ccxt(api_key=api_key, api_secret=api_secret),
             exchange_id="binance",

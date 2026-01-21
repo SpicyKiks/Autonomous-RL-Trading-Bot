@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-
 
 # ------------------------------------------------------------
 # Strategy interface (THIS is what backtester.py is trying to import)
@@ -113,12 +111,12 @@ class RSIReversion(Strategy):
 # ------------------------------------------------------------
 
 def run_baselines(
-    dataset_id: Optional[str],
+    dataset_id: str | None,
     mode: str,
-    out_csv: Optional[str],
-    strategies: List[Strategy],
-    symbol: Optional[str] = None,
-    interval: Optional[str] = None,
+    out_csv: str | None,
+    strategies: list[Strategy],
+    symbol: str | None = None,
+    interval: str | None = None,
 ) -> int:
     """
     Loads dataset (via rl.dataset.Dataset or parquet) and outputs a CSV of positions for each baseline.
@@ -129,6 +127,7 @@ def run_baselines(
     # Try to load from parquet if symbol/interval provided
     if symbol and interval:
         from pathlib import Path
+
         import pandas as pd
         
         dataset_path = Path(f"data/processed/{symbol.upper()}_{interval}_dataset.parquet")
@@ -157,7 +156,7 @@ def run_baselines(
     if "close" not in df.columns and "Close" in df.columns:
         df = df.rename(columns={"Close": "close"})
 
-    out: Dict[str, pd.Series] = {}
+    out: dict[str, pd.Series] = {}
     for strat in strategies:
         strat.reset()
         out[strat.name] = strat.generate_positions(df)
@@ -174,7 +173,7 @@ def run_baselines(
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="arbt baselines", description="Run baseline strategies on a dataset.")
     p.add_argument("--mode", choices=["spot", "futures"], default="spot", help="market mode (default: spot)")
     p.add_argument("--dataset-id", default=None, help="dataset id under artifacts/datasets (default: latest, or use --symbol/--interval)")
@@ -204,7 +203,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # default: run all if none specified
     selected_any = args.buyhold or args.sma or args.rsi
-    strategies: List[Strategy] = []
+    strategies: list[Strategy] = []
 
     if args.buyhold or not selected_any:
         strategies.append(BuyAndHold(allow_short=allow_short))

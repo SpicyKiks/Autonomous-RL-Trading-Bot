@@ -3,16 +3,16 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from autonomous_rl_trading_bot.common.paths import ensure_artifact_tree
 
 
 def _utc_compact() -> str:
     # 20260104T163012Z
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _safe_segment(s: str) -> str:
@@ -40,7 +40,7 @@ class ArtifactStore:
     base_dir: Path
 
     @staticmethod
-    def default() -> "ArtifactStore":
+    def default() -> ArtifactStore:
         # Import lazily to avoid circulars
         from autonomous_rl_trading_bot.common.paths import artifacts_dir
 
@@ -92,10 +92,10 @@ class ArtifactStore:
     def latest_dataset_dir(
         self,
         *,
-        market_type: Optional[str] = None,
-        symbol: Optional[str] = None,
-        interval: Optional[str] = None,
-    ) -> Optional[Path]:
+        market_type: str | None = None,
+        symbol: str | None = None,
+        interval: str | None = None,
+    ) -> Path | None:
         """Best-effort latest dataset resolver.
 
         Filters by (market_type/symbol/interval) if provided. Uses meta.json when present.
@@ -105,7 +105,7 @@ class ArtifactStore:
         if not base.exists():
             return None
 
-        best: Optional[Path] = None
+        best: Path | None = None
         best_key: float = -1.0
 
         for d in base.iterdir():
@@ -113,7 +113,7 @@ class ArtifactStore:
                 continue
 
             meta_path = d / "meta.json"
-            meta: Dict[str, Any] = {}
+            meta: dict[str, Any] = {}
             if meta_path.exists():
                 try:
                     meta = json.loads(meta_path.read_text(encoding="utf-8"))

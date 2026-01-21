@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from autonomous_rl_trading_bot.broker.base_broker import BrokerAdapter
 
@@ -20,19 +19,19 @@ class PositionSync:
     - Exchange mode: can poll broker each step using sync_from_broker().
     """
 
-    def __init__(self, broker: Optional[BrokerAdapter] = None, symbol: Optional[str] = None, market_type: str = "spot"):
+    def __init__(self, broker: BrokerAdapter | None = None, symbol: str | None = None, market_type: str = "spot"):
         self._broker = broker
         self._symbol = symbol
         self._market_type = market_type
-        self._last: Optional[LivePosition] = None
+        self._last: LivePosition | None = None
 
     def set_local(self, pos: LivePosition) -> None:
         self._last = pos
 
-    def get(self) -> Optional[LivePosition]:
+    def get(self) -> LivePosition | None:
         return self._last
 
-    def sync_from_broker(self) -> Optional[LivePosition]:
+    def sync_from_broker(self) -> LivePosition | None:
         if self._broker is None or not self._symbol:
             return None
 

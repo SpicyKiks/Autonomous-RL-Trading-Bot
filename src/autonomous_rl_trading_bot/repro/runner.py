@@ -3,11 +3,9 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
-
-import pandas as pd
+from typing import Any
 
 # Import lazily to avoid circular imports
 # from autonomous_rl_trading_bot.backtest.runner import run_backtest
@@ -21,7 +19,7 @@ import pandas as pd
 
 def _utc_now_compact() -> str:
     """Generate compact UTC timestamp for run IDs."""
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _download_data(
@@ -136,7 +134,7 @@ def run_repro(
     mode: str,
     seed: int = 42,
     output_dir: str = "reports/repro",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run complete reproducibility pipeline: download -> features -> dataset -> train -> backtest.
     
@@ -179,10 +177,10 @@ def run_repro(
     print("\n[4/6] Training PPO...")
     # Lazy import to avoid circular dependencies
     from autonomous_rl_trading_bot.training.train_pipeline import (
+        evaluate_ppo,
         load_dataset,
         split_dataset,
         train_ppo,
-        evaluate_ppo,
     )
     
     df = load_dataset(symbol, interval)
@@ -291,7 +289,7 @@ def run_repro(
         "seed": seed,
         "dataset_path": str(dataset_file),
         "model_path": str(model_path),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     
     run_config_path = repro_dir / "run_config.json"
@@ -316,14 +314,14 @@ def run_repro(
 
 
 def _generate_comparison(
-    ppo_metrics: Dict[str, Any],
-    sma_metrics: Dict[str, Any],
+    ppo_metrics: dict[str, Any],
+    sma_metrics: dict[str, Any],
     run_id: str,
     symbol: str,
     interval: str,
     timesteps: int,
     seed: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate comparison between PPO and SMA."""
     # Determine winner
     ppo_return = ppo_metrics.get("total_return", 0.0)
@@ -377,7 +375,7 @@ def _generate_comparison(
     }
 
 
-def _write_comparison_md(comparison: Dict[str, Any], output_path: Path) -> None:
+def _write_comparison_md(comparison: dict[str, Any], output_path: Path) -> None:
     """Write comparison markdown report."""
     ppo = comparison["ppo"]
     sma = comparison["sma"]
@@ -390,7 +388,7 @@ def _write_comparison_md(comparison: Dict[str, Any], output_path: Path) -> None:
 **Interval:** {comparison['interval']}  
 **Training Timesteps:** {comparison['timesteps']:,}  
 **Seed:** {comparison['seed']}  
-**Generated:** {datetime.now(timezone.utc).isoformat()}
+**Generated:** {datetime.now(UTC).isoformat()}
 
 ## Summary
 

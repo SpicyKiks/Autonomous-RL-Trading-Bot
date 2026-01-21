@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 def write_run_summary(
@@ -11,12 +11,12 @@ def write_run_summary(
     *,
     run_id: str,
     dataset_id: str,
-    dataset_meta: Dict[str, Any],
-    split_used: Optional[str],
-    config_snapshot: Dict[str, Any],
-    metrics: Dict[str, Any],
+    dataset_meta: dict[str, Any],
+    split_used: str | None,
+    config_snapshot: dict[str, Any],
+    metrics: dict[str, Any],
     strategy_name: str,
-    strategy_params: Dict[str, Any],
+    strategy_params: dict[str, Any],
 ) -> None:
     """
     Write run_summary.md with config snapshot, dataset info, and key metrics.
@@ -36,12 +36,12 @@ def write_run_summary(
         "# Backtest Run Summary",
         "",
         f"**Run ID**: `{run_id}`",
-        f"**Generated**: {datetime.now(timezone.utc).isoformat()}",
+        f"**Generated**: {datetime.now(UTC).isoformat()}",
         "",
         "## Configuration",
         "",
         f"- **Strategy**: {strategy_name}",
-        f"- **Strategy Parameters**:",
+        "- **Strategy Parameters**:",
     ]
     
     for key, value in strategy_params.items():
@@ -72,13 +72,13 @@ def write_run_summary(
             lines.append(f"  - End Index: {split_info.get('end_idx', 'N/A')}")
             if "start_time_ms" in split_info and split_info["start_time_ms"] is not None:
                 try:
-                    start_dt = datetime.fromtimestamp(split_info["start_time_ms"] / 1000, tz=timezone.utc)
+                    start_dt = datetime.fromtimestamp(split_info["start_time_ms"] / 1000, tz=UTC)
                     lines.append(f"  - Start Time: {start_dt.isoformat()}")
                 except (ValueError, TypeError, OSError):
                     pass
             if "end_time_ms" in split_info and split_info["end_time_ms"] is not None:
                 try:
-                    end_dt = datetime.fromtimestamp(split_info["end_time_ms"] / 1000, tz=timezone.utc)
+                    end_dt = datetime.fromtimestamp(split_info["end_time_ms"] / 1000, tz=UTC)
                     lines.append(f"  - End Time: {end_dt.isoformat()}")
                 except (ValueError, TypeError, OSError):
                     pass

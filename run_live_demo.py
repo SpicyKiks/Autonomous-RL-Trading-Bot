@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from autonomous_rl_trading_bot.common.config import load_config
 from autonomous_rl_trading_bot.common.db import connect, migrate, upsert_run
@@ -17,7 +17,7 @@ from autonomous_rl_trading_bot.live.live_runner import LiveRunner, LiveRunnerCon
 
 def _utc_ts() -> str:
     """Generate UTC timestamp with microseconds for uniqueness."""
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    return datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
 
 
 def _make_run_id(mode: str, cfg_hash: str, symbol: str, interval: str) -> str:
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         or "buy_and_hold"
     )
 
-    strat_params: Dict[str, Any] = {}
+    strat_params: dict[str, Any] = {}
     strat_block = (eval_cfg.get("strategies", {}) or {}).get(strategy, {})
     if isinstance(strat_block, dict):
         strat_params.update(strat_block)
@@ -102,8 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     log_console = bool((cfg.get("logging", {}) or {}).get("console", True))
     log_file = bool((cfg.get("logging", {}) or {}).get("file", True))
 
-    per_run_log: Optional[str] = None
-    global_log: Optional[str] = None
+    per_run_log: str | None = None
+    global_log: str | None = None
     log_paths = []
 
     if log_file:
@@ -126,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     seed = int(cfg["run"]["seed"])
     seed_report = set_global_seed(seed)
 
-    created_utc = datetime.now(timezone.utc).isoformat()
+    created_utc = datetime.now(UTC).isoformat()
     run_json_path = str(run_dir / "run.json")
 
     with connect(db_path) as conn:
@@ -202,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     runner = LiveRunner(cfg, runner_cfg)
     out = runner.run(max_steps=args.max_steps, max_minutes=args.max_minutes)
 
-    meta: Dict[str, Any] = {
+    meta: dict[str, Any] = {
         "run_id": run_id,
         "created_utc": created_utc,
         "kind": "live",

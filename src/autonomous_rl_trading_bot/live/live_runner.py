@@ -4,13 +4,12 @@ import json
 import math
 import time
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
-from autonomous_rl_trading_bot.broker.base_broker import BrokerAdapter
 from autonomous_rl_trading_bot.broker.execution import order_for_target_fraction
 from autonomous_rl_trading_bot.common.db import connect
 from autonomous_rl_trading_bot.common.timeframes import interval_to_ms
@@ -25,7 +24,7 @@ from autonomous_rl_trading_bot.live.safeguards import Safeguards, SafeguardsConf
 
 
 def _iso_utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _now_ms() -> int:
@@ -51,7 +50,7 @@ class LiveRunnerConfig:
     # Policy selection
     policy: str = "baseline"  # baseline|sb3
     strategy: str = "buy_and_hold"  # baseline only
-    strategy_params: Optional[Dict[str, float | int]] = None  # baseline only
+    strategy_params: dict[str, float | int] | None = None  # baseline only
     sb3_algo: str = "ppo"  # ppo|dqn (sb3 only)
     sb3_model_path: str = ""  # sb3 only
 
@@ -96,8 +95,8 @@ class _BaselinePolicy(_Policy):
     def __init__(self, *, market_type: str, strategy: Strategy):
         self.market_type = market_type
         self.strategy = strategy
-        self._price_history: List[float] = []
-        self._time_history: List[int] = []
+        self._price_history: list[float] = []
+        self._time_history: list[int] = []
 
     def act_target(self, *, t: int, obs: np.ndarray, price: float) -> float:
         # Handle strategies with act() method (step-wise)
@@ -235,7 +234,7 @@ class _PortfolioState:
 class LiveRunner:
     """Candle-driven live runner (paper trading)."""
 
-    def __init__(self, cfg: Dict[str, Any], rcfg: LiveRunnerConfig):
+    def __init__(self, cfg: dict[str, Any], rcfg: LiveRunnerConfig):
         self.cfg = cfg
         self.rcfg = rcfg
 
@@ -273,6 +272,7 @@ class LiveRunner:
         self.broker = None
         if rcfg.demo:
             import os
+
             from autonomous_rl_trading_bot.broker.futures_broker import FuturesBroker
             from autonomous_rl_trading_bot.broker.spot_broker import SpotBroker
 
@@ -358,10 +358,10 @@ class LiveRunner:
 
         self._interval_ms = interval_to_ms(rcfg.interval)
 
-        self._closes: List[float] = []
-        self._vols: List[float] = []
-        self._open_times: List[int] = []
-        self._first_close: Optional[float] = None
+        self._closes: list[float] = []
+        self._vols: list[float] = []
+        self._open_times: list[int] = []
+        self._first_close: float | None = None
 
         self.state = _PortfolioState(
             cash=float(rcfg.initial_equity),
@@ -486,7 +486,7 @@ class LiveRunner:
             )
             conn.commit()
 
-    def _persist_trade_row(self, trade: Dict[str, Any]) -> None:
+    def _persist_trade_row(self, trade: dict[str, Any]) -> None:
         with connect(Path(self.rcfg.db_path)) as conn:
             conn.execute(
                 """
@@ -516,7 +516,7 @@ class LiveRunner:
             )
             conn.commit()
 
-    def _finalize_session(self, *, status: str, final_equity: float, metrics: Dict[str, Any]) -> None:
+    def _finalize_session(self, *, status: str, final_equity: float, metrics: dict[str, Any]) -> None:
         with connect(Path(self.rcfg.db_path)) as conn:
             conn.execute(
                 """
@@ -615,7 +615,7 @@ class LiveRunner:
     # Execution
     # -----------------
 
-    def _execute_to_target(self, *, target: float, price: float, open_time_ms: int) -> Optional[Dict[str, Any]]:
+    def _execute_to_target(self, *, target: float, price: float, open_time_ms: int) -> dict[str, Any] | None:
         target = float(max(-1.0, min(1.0, target)))
         if self.market_type == "spot":
             target = max(0.0, target)
@@ -739,7 +739,7 @@ class LiveRunner:
 
     def _execute_to_target_demo(
         self, *, target: float, price: float, open_time_ms: int, equity_now: float
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Execute order via real broker (demo mode)."""
         import logging
 
@@ -769,7 +769,6 @@ class LiveRunner:
 
         # Normalize order quantity to respect exchange limits
         if self.broker and hasattr(self.broker, "normalize_amount"):
-            from decimal import Decimal
             normalized_qty_decimal, norm_error = self.broker.normalize_amount(
                 symbol=self.rcfg.symbol,
                 amount=order_req.qty,
@@ -919,14 +918,14 @@ class LiveRunner:
     # Main loop
     # -----------------
 
-    def run(self, *, max_steps: Optional[int] = None, max_minutes: Optional[float] = None) -> Dict[str, Any]:
+    def run(self, *, max_steps: int | None = None, max_minutes: float | None = None) -> dict[str, Any]:
         import logging
         logger = logging.getLogger("arbt")
         
         start_ms = _now_ms()
-        trades_out: List[Dict[str, Any]] = []
+        trades_out: list[dict[str, Any]] = []
         status = "DONE"
-        stop_reason: Optional[str] = None
+        stop_reason: str | None = None
 
         try:
             while True:
@@ -1031,8 +1030,12 @@ class LiveRunner:
             self._finalize_session(status=status, final_equity=final_equity, metrics=metrics)
 
             # Always write artifacts (even with zero trades)
-            from autonomous_rl_trading_bot.evaluation.reporting import write_trades_csv, write_equity_csv
             import csv
+
+            from autonomous_rl_trading_bot.evaluation.reporting import (
+                write_equity_csv,
+                write_trades_csv,
+            )
             
             # Collect equity rows from database
             equity_rows = []

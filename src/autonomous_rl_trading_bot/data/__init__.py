@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from .ohlcv import MarketType, OhlcvBar, bars_from_ccxt, bars_to_frame, frame_to_bars, validate_bars
 from .exchange_client import (
     ExchangeClient,
     ExchangeFetchSpec,
@@ -9,6 +8,7 @@ from .exchange_client import (
     require_network,
     to_ccxt_symbol,
 )
+from .ohlcv import MarketType, OhlcvBar, bars_from_ccxt, bars_to_frame, frame_to_bars, validate_bars
 
 # Lazy imports for CCXT clients to avoid import-time network dependencies
 # These classes are only imported when explicitly requested, not at module import time
@@ -60,7 +60,7 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-from .feature_engineering import compute_features, causal_zscore, build_state_windows
+from .feature_engineering import build_state_windows, causal_zscore, compute_features
 
 __all__ = [
     "MarketType",

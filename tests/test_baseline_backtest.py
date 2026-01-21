@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-import pytest
 from pathlib import Path
+
+import pytest
 
 from autonomous_rl_trading_bot.backtest.runner import run_backtest
 
@@ -35,7 +36,7 @@ def test_baseline_backtest_sma():
     assert equity_csv.exists(), f"Equity CSV not created: {equity_csv}"
     
     # Verify report JSON has required keys
-    with open(report_json, "r") as f:
+    with open(report_json) as f:
         metrics = json.load(f)
     
     required_keys = [
@@ -88,7 +89,7 @@ def test_baseline_backtest_buyhold():
     assert Path(result["trades_csv"]).exists()
     assert Path(result["equity_csv"]).exists()
     
-    with open(result["report_json"], "r") as f:
+    with open(result["report_json"]) as f:
         metrics = json.load(f)
     
     assert metrics["policy"] == "buyhold"

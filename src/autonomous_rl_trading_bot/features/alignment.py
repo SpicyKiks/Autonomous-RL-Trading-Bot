@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
-
 import pandas as pd
 
 
@@ -9,8 +7,8 @@ def asof_align(
     left_df: pd.DataFrame,
     right_df: pd.DataFrame,
     on: str = "timestamp",
-    by: Optional[str] = None,
-    tolerance: Optional[pd.Timedelta] = None,
+    by: str | None = None,
+    tolerance: pd.Timedelta | None = None,
     direction: str = "backward",
 ) -> pd.DataFrame:
     """
@@ -51,10 +49,10 @@ def asof_align(
 
 def asof_align_many(
     base_df: pd.DataFrame,
-    frames: Dict[str, pd.DataFrame],
+    frames: dict[str, pd.DataFrame],
     on: str = "timestamp",
-    by: Optional[str] = None,
-    tolerance: Optional[pd.Timedelta] = None,
+    by: str | None = None,
+    tolerance: pd.Timedelta | None = None,
     direction: str = "backward",
 ) -> pd.DataFrame:
     """

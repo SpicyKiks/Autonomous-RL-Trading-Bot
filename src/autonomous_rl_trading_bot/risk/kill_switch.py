@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,7 +15,7 @@ class KillSwitch:
     def __init__(self, cfg: KillSwitchConfig = KillSwitchConfig()) -> None:
         self.cfg = cfg
 
-    def check(self, *, equity: float, peak_equity: float) -> Tuple[bool, str]:
+    def check(self, *, equity: float, peak_equity: float) -> tuple[bool, str]:
         eq = float(equity)
         peak = float(peak_equity)
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 import gymnasium as gym
 import numpy as np
@@ -46,7 +45,7 @@ class TradingEnvBase(gym.Env):
         self._seed = int(seed)
         self._rng = seed_rng(self._seed)
 
-    def reset(self, *, seed: Optional[int] = None, options=None):  # type: ignore[override]
+    def reset(self, *, seed: int | None = None, options=None):  # type: ignore[override]
         if seed is not None:
             self._seed = int(seed)
             self._rng = seed_rng(self._seed)

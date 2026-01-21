@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-import pickle
 import sqlite3
 from pathlib import Path
 
 import numpy as np
 import pytest
-from sklearn.preprocessing import RobustScaler
 
 from autonomous_rl_trading_bot.common.db import apply_migrations, ensure_schema_migrations
 from autonomous_rl_trading_bot.common.paths import repo_root

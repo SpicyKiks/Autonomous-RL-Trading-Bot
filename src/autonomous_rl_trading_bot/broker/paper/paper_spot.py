@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, List, Optional
 
 from autonomous_rl_trading_bot.broker.base_broker import BrokerAdapter
 from autonomous_rl_trading_bot.common.types import (
@@ -46,9 +46,9 @@ class PaperSpotBroker(BrokerAdapter):
             avg_entry_price=0.0,
             peak_equity=float(cfg.initial_cash),
         )
-        self._last_price: Optional[float] = None
-        self._last_ts_ms: Optional[int] = None
-        self._fills: List[Fill] = []
+        self._last_price: float | None = None
+        self._last_ts_ms: int | None = None
+        self._fills: list[Fill] = []
         self._order_seq: int = 0
 
     # extra helper for feeding prices
@@ -81,7 +81,7 @@ class PaperSpotBroker(BrokerAdapter):
             leverage=0.0,
         )
 
-    def get_open_positions(self, *, symbol: Optional[str] = None) -> list[Position]:
+    def get_open_positions(self, *, symbol: str | None = None) -> list[Position]:
         if symbol is not None and symbol.upper() != self.symbol:
             return []
         if self._state.qty_base <= 0.0:
@@ -184,7 +184,7 @@ class PaperSpotBroker(BrokerAdapter):
     def cancel_order(self, order_id: str) -> bool:
         return False
 
-    def iter_fills(self, *, since_ts_ms: Optional[int] = None) -> Iterable[Fill]:
+    def iter_fills(self, *, since_ts_ms: int | None = None) -> Iterable[Fill]:
         if since_ts_ms is None:
             yield from list(self._fills)
             return

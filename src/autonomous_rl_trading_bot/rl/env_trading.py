@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-import numpy as np
 import gymnasium as gym
+import numpy as np
 from gymnasium import spaces
 
 
@@ -60,10 +60,10 @@ class TradingEnv(gym.Env):
 
     def __init__(
         self,
-        data: Dict[str, np.ndarray],
+        data: dict[str, np.ndarray],
         cfg: TradingEnvConfig,
-        seed: Optional[int] = None,
-        feature_list: Optional[List[str]] = None,
+        seed: int | None = None,
+        feature_list: list[str] | None = None,
     ) -> None:
         super().__init__()
         if seed is None:
@@ -118,7 +118,7 @@ class TradingEnv(gym.Env):
             low=-np.inf, high=np.inf, shape=(self.cfg.lookback, obs_dim), dtype=np.float32
         )
 
-    def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
+    def reset(self, *, seed: int | None = None, options: dict | None = None) -> tuple[np.ndarray, dict[str, Any]]:
         if seed is not None:
             self.rng = np.random.default_rng(int(seed))
 
@@ -134,7 +134,7 @@ class TradingEnv(gym.Env):
         self.slip_total = 0.0
 
         obs = self._get_obs()
-        info: Dict[str, Any] = {"equity": float(self.equity), "t": int(self.t)}
+        info: dict[str, Any] = {"equity": float(self.equity), "t": int(self.t)}
         return obs, info
 
     def _price(self) -> float:
@@ -149,7 +149,7 @@ class TradingEnv(gym.Env):
         pnl = float(self.futures_pos * (price - self.entry_price))
         return float(self.cash + pnl)
 
-    def _apply_fee_and_slip(self, notional: float) -> Tuple[float, float]:
+    def _apply_fee_and_slip(self, notional: float) -> tuple[float, float]:
         fee = abs(notional) * (self.cfg.fee_bps / 10_000.0)
         slip = abs(notional) * (self.cfg.slippage_bps / 10_000.0)
         self.fee_total += fee
@@ -179,14 +179,14 @@ class TradingEnv(gym.Env):
 
         return window.astype(np.float32, copy=False)
 
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
+    def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         if self.done:
             raise RuntimeError("step() called after done=True. Call reset().")
 
         price = self._price()
         prev_equity = self._mark_to_market(price)
 
-        target: Optional[float] = None
+        target: float | None = None
         mt = self.cfg.market_type
 
         if mt == "spot":

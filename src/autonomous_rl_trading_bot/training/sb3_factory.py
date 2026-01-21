@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 try:
-    from stable_baselines3 import PPO, DQN  # type: ignore
+    from stable_baselines3 import DQN, PPO  # type: ignore
     from stable_baselines3.common.utils import set_random_seed
     from stable_baselines3.common.vec_env import VecEnv
 except ModuleNotFoundError as e:  # pragma: no cover
@@ -16,14 +16,14 @@ except ModuleNotFoundError as e:  # pragma: no cover
 @dataclass(frozen=True)
 class SB3FactoryConfig:
     algo: str  # ppo|dqn
-    tensorboard_log: Optional[str]
+    tensorboard_log: str | None
     seed: int = 0
     verbose: int = 1
     device: str = "cpu"  # Force CPU for MLP policies to avoid GPU warnings
-    algo_params: Dict[str, Any] | None = None
+    algo_params: dict[str, Any] | None = None
 
 
-def create_model(*, env: "VecEnv", cfg: SB3FactoryConfig):
+def create_model(*, env: VecEnv, cfg: SB3FactoryConfig):
     """
     Create an SB3 model with sensible defaults. Hyperparameters can be supplied via cfg.algo_params.
     """

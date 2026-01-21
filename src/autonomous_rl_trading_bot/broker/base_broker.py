@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from autonomous_rl_trading_bot.common.types import (
     AccountSnapshot,
@@ -25,7 +25,7 @@ class BrokerAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_open_positions(self, *, symbol: Optional[str] = None) -> list[Position]:
+    def get_open_positions(self, *, symbol: str | None = None) -> list[Position]:
         raise NotImplementedError
 
     @abstractmethod
@@ -37,7 +37,7 @@ class BrokerAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def iter_fills(self, *, since_ts_ms: Optional[int] = None) -> Iterable[Fill]:
+    def iter_fills(self, *, since_ts_ms: int | None = None) -> Iterable[Fill]:
         """Yield fills since a timestamp. (Implementations may return a list.)"""
         raise NotImplementedError
 

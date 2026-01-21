@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-import decimal
 import logging
-import math
 import os
 import types
+from collections.abc import Iterable
 from decimal import Decimal
-from typing import Any, Dict, Iterable, Optional, Union
+from typing import Any
 
 from autonomous_rl_trading_bot.broker.base_broker import BrokerAdapter
-from autonomous_rl_trading_bot.common.types import AccountSnapshot, Fill, OrderAck, OrderRequest, Position
+from autonomous_rl_trading_bot.common.types import (
+    AccountSnapshot,
+    Fill,
+    OrderAck,
+    OrderRequest,
+    Position,
+)
 from autonomous_rl_trading_bot.data.exchange_client import to_ccxt_symbol
 
 
@@ -112,7 +117,7 @@ def _bootstrap_futures_markets_from_exchange_info(ex: Any) -> None:
                     min_notional = float(filter_item.get("notional", "0"))
             
             # Build market dict (CCXT-compatible structure for futures)
-            market: Dict[str, Any] = {
+            market: dict[str, Any] = {
                 "id": symbol_id,
                 "symbol": ccxt_symbol_unified,  # Use unified futures format
                 "base": base,
@@ -207,11 +212,11 @@ class FuturesBroker(BrokerAdapter):
         self,
         *,
         exchange_id: str = "binanceusdm",
-        api_key: Optional[str] = None,
-        api_secret: Optional[str] = None,
-        demo: Optional[bool] = None,
-        base_url_demo: Optional[str] = None,
-        leverage: Optional[float] = None,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+        demo: bool | None = None,
+        base_url_demo: str | None = None,
+        leverage: float | None = None,
         allow_network_env: str = "ALLOW_NETWORK",
     ) -> None:
         self.exchange_id = exchange_id
@@ -224,7 +229,7 @@ class FuturesBroker(BrokerAdapter):
 
         self._exchange = None
         self._allow_network = (os.getenv(self.allow_network_env, "") or "").strip() == "1"
-        self._resolved_symbols: Dict[str, str] = {}  # Cache: user_symbol -> ccxt_symbol
+        self._resolved_symbols: dict[str, str] = {}  # Cache: user_symbol -> ccxt_symbol
 
     def _require_network(self) -> None:
         if not self._allow_network:
@@ -236,8 +241,9 @@ class FuturesBroker(BrokerAdapter):
         if self._exchange is None:
             self._require_network()
             try:
-                import ccxt
                 import logging
+
+                import ccxt
             except ImportError as e:
                 raise RuntimeError("ccxt is required for exchange execution. Install: pip install ccxt") from e
 
@@ -450,7 +456,7 @@ class FuturesBroker(BrokerAdapter):
         
         return resolved
     
-    def _market_id_for(self, ccxt_symbol: str) -> Optional[str]:
+    def _market_id_for(self, ccxt_symbol: str) -> str | None:
         """
         Get market_id (e.g., "BTCUSDT") from CCXT unified symbol (e.g., "BTC/USDT:USDT").
         
@@ -487,7 +493,7 @@ class FuturesBroker(BrokerAdapter):
             leverage=float(self.leverage or 0.0),
         )
 
-    def normalize_amount(self, symbol: str, amount: float, price: Optional[float] = None) -> tuple[Optional[Decimal], Optional[str]]:
+    def normalize_amount(self, symbol: str, amount: float, price: float | None = None) -> tuple[Decimal | None, str | None]:
         """
         Normalize order amount to respect exchange limits using Decimal math.
         
@@ -646,7 +652,7 @@ class FuturesBroker(BrokerAdapter):
             return OrderAck(order_id="", status="rejected", reason=f"invalid side: {side}")
         
         # Build params for POST /fapi/v1/order
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "symbol": market_id,  # Use market_id, not unified symbol
             "side": side_upper,  # BUY or SELL
             "type": "MARKET",
@@ -682,7 +688,7 @@ class FuturesBroker(BrokerAdapter):
             logger.warning(f"demo_raw_order failed: {error_class}: {error_msg}")
             return OrderAck(order_id="", status="rejected", reason=f"{error_class}: {error_msg}")
 
-    def get_open_positions(self, *, symbol: Optional[str] = None) -> list[Position]:
+    def get_open_positions(self, *, symbol: str | None = None) -> list[Position]:
         # In demo mode, Binance Demo doesn't support fetch_positions() endpoints
         # Return empty list - LiveRunner will use internal position tracking
         if self.demo:
@@ -823,7 +829,7 @@ class FuturesBroker(BrokerAdapter):
         self._require_network()
         return False
 
-    def iter_fills(self, *, since_ts_ms: Optional[int] = None) -> Iterable[Fill]:
+    def iter_fills(self, *, since_ts_ms: int | None = None) -> Iterable[Fill]:
         self._require_network()
         ex = self._get_exchange()
 

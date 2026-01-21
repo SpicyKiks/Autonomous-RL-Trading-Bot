@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from autonomous_rl_trading_bot.evaluation.reporting import (
     build_repro_payload,
     generate_run_report,

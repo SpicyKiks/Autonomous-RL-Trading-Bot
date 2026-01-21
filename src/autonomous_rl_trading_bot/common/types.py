@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Optional
-
+from typing import Literal
 
 # ---- Generic trading primitives (mode-agnostic) ----
 
@@ -25,9 +24,9 @@ class OrderRequest:
     order_type: OrderType
     qty: float
     qty_unit: OrderQtyUnit
-    price: Optional[float] = None
+    price: float | None = None
     reduce_only: bool = False
-    client_order_id: Optional[str] = None
+    client_order_id: str | None = None
 
 
 OrderStatus = Literal["new", "partially_filled", "filled", "canceled", "rejected"]
@@ -37,7 +36,7 @@ OrderStatus = Literal["new", "partially_filled", "filled", "canceled", "rejected
 class OrderAck:
     order_id: str
     status: OrderStatus
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,5 +79,5 @@ class RiskDecision:
     verdict: RiskVerdict
     reason: str = ""
     # If verdict == "override", the risk layer may rewrite the order.
-    override_order: Optional[OrderRequest] = None
+    override_order: OrderRequest | None = None
 

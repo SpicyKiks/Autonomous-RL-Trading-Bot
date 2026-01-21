@@ -1,28 +1,29 @@
 # src/autonomous_rl_trading_bot/training/trainer.py
 from __future__ import annotations
 
-from dataclasses import dataclass, fields as dc_fields
+from dataclasses import dataclass
+from dataclasses import fields as dc_fields
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
+from stable_baselines3 import A2C, DQN, PPO
 
 from autonomous_rl_trading_bot.common.fs import ensure_dir, write_json
 from autonomous_rl_trading_bot.common.hashing import dataset_hash
 from autonomous_rl_trading_bot.common.logging import get_logger
 from autonomous_rl_trading_bot.evaluation.metrics import compute_metrics
 from autonomous_rl_trading_bot.evaluation.reporting import generate_run_report
+
 # Lazy import to avoid circular dependencies
 # from autonomous_rl_trading_bot.repro.repro import build_repro_payload
 from autonomous_rl_trading_bot.rl.dataset import Dataset
 from autonomous_rl_trading_bot.rl.env_trading import TradingEnv, TradingEnvConfig
 
-from stable_baselines3 import A2C, DQN, PPO
-
 logger = get_logger(__name__)
 
 
-def _asdict_dataclass(obj: Any) -> Dict[str, Any]:
+def _asdict_dataclass(obj: Any) -> dict[str, Any]:
     if not hasattr(obj, "__dataclass_fields__"):
         raise TypeError("Expected a dataclass instance")
     return {f.name: getattr(obj, f.name) for f in dc_fields(obj)}
@@ -70,7 +71,7 @@ class TrainConfig:
 
     # capital / sizing
     initial_cash: float = 1000.0
-    initial_equity: Optional[float] = None  # alias to initial_cash (wins if provided)
+    initial_equity: float | None = None  # alias to initial_cash (wins if provided)
     position_fraction: float = 1.0  # [0,1]
     futures_leverage: float = 3.0  # only used for futures mode (if env supports)
 
@@ -79,11 +80,11 @@ class TrainConfig:
 
     # outputs
     artifacts_dir: str = "artifacts"
-    run_name: Optional[str] = None
+    run_name: str | None = None
 
     # optional explicit output locations (used by run_train.py plumbing)
-    run_dir: Optional[Path] = None  # base runs dir OR fully qualified run output dir (see train_and_evaluate)
-    models_dir: Optional[Path] = None
+    run_dir: Path | None = None  # base runs dir OR fully qualified run output dir (see train_and_evaluate)
+    models_dir: Path | None = None
 
     # evaluation
     eval_episodes: int = 1
@@ -136,7 +137,7 @@ def _make_algo(algo: str):
     raise ValueError(f"Unknown algo '{algo}'. Expected one of: ppo, a2c, dqn")
 
 
-def _parse_split(v: Any) -> Tuple[str, Any]:
+def _parse_split(v: Any) -> tuple[str, Any]:
     """Return (kind, value) where kind in {'none','name','weight'}."""
     if v is None:
         return ("none", None)
@@ -161,7 +162,7 @@ def _parse_split(v: Any) -> Tuple[str, Any]:
     return ("name", str(v).strip().lower())
 
 
-def _split_time_weighted(ds: Dataset, train_weight: float, eval_weight: float) -> Tuple[Dataset, Dataset]:
+def _split_time_weighted(ds: Dataset, train_weight: float, eval_weight: float) -> tuple[Dataset, Dataset]:
     if train_weight <= 0 or eval_weight <= 0:
         raise ValueError("train_split and eval_split weights must be > 0")
     total = float(train_weight + eval_weight)
@@ -170,7 +171,7 @@ def _split_time_weighted(ds: Dataset, train_weight: float, eval_weight: float) -
     return train_ds, eval_ds
 
 
-def _resolve_train_eval_datasets(cfg: TrainConfig, base_ds: Dataset) -> Tuple[Dataset, Dataset]:
+def _resolve_train_eval_datasets(cfg: TrainConfig, base_ds: Dataset) -> tuple[Dataset, Dataset]:
     """Resolve train/eval datasets using either named splits (preferred) or a time split fallback."""
     train_kind, train_val = _parse_split(cfg.train_split)
     eval_kind, eval_val = _parse_split(cfg.eval_split)
@@ -189,8 +190,8 @@ def _resolve_train_eval_datasets(cfg: TrainConfig, base_ds: Dataset) -> Tuple[Da
             eval_w = eval_val if eval_kind == "weight" else 2.0
             return _split_time_weighted(base_ds, float(train_w), float(eval_w))
 
-        train_name: Optional[str] = train_val if train_kind == "name" else None
-        eval_name: Optional[str] = eval_val if eval_kind == "name" else None
+        train_name: str | None = train_val if train_kind == "name" else None
+        eval_name: str | None = eval_val if eval_kind == "name" else None
 
         if train_name is None:
             train_name = "train" if "train" in splits else next(iter(splits.keys()))
@@ -218,7 +219,7 @@ def _make_env_config(cfg: TrainConfig) -> TradingEnvConfig:
     Build TradingEnvConfig but only pass keys it actually supports.
     This makes trainer resilient when env config changes.
     """
-    env_cfg_kwargs: Dict[str, Any] = {
+    env_cfg_kwargs: dict[str, Any] = {
         "mode": cfg.mode,
         "lookback": cfg.lookback,
         "fee_bps": cfg.fee_bps,
@@ -238,10 +239,10 @@ def _make_env_config(cfg: TrainConfig) -> TradingEnvConfig:
 def train_and_evaluate(
     *,
     cfg: TrainConfig,
-    dataset: Optional[Dataset] = None,
-    run_id: Optional[str] = None,
-    out_dir: Optional[Path] = None,
-) -> Dict[str, Any]:
+    dataset: Dataset | None = None,
+    run_id: str | None = None,
+    out_dir: Path | None = None,
+) -> dict[str, Any]:
     """
     End-to-end training + evaluation run.
 
@@ -295,7 +296,7 @@ def train_and_evaluate(
     logger.info(f"Saved trained model to: {policy_path}")
 
     # --- eval ---
-    all_episode_infos: list[Dict[str, Any]] = []
+    all_episode_infos: list[dict[str, Any]] = []
     for _ in range(int(cfg.eval_episodes)):
         obs, _ = eval_env.reset()
         done = False
@@ -399,7 +400,7 @@ def train_and_evaluate(
     ]
     
     # Empty trades list (TradingEnv doesn't track explicit trades)
-    trades_rows: list[Dict[str, Any]] = []
+    trades_rows: list[dict[str, Any]] = []
     
     report_artifacts = generate_run_report(
         out_dir=run_dir,
@@ -410,7 +411,7 @@ def train_and_evaluate(
         repro=_json_serialize_paths(repro),
     )
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "run_name": run_name,
         "run_dir": str(run_dir),
         "dataset_id": cfg.dataset_id,

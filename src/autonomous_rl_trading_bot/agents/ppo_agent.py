@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 import numpy as np
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
 from stable_baselines3.common.utils import set_random_seed
+from stable_baselines3.common.vec_env import VecEnv
 
 
 def create_ppo(
-    env: Union[Any, VecEnv],
+    env: Any | VecEnv,
     *,
     seed: int = 42,
-    tensorboard_log_dir: Optional[str] = None,
+    tensorboard_log_dir: str | None = None,
     n_steps: int = 2048,
     batch_size: int = 64,
     gamma: float = 0.99,

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Tuple
-
 import numpy as np
 import pandas as pd
 
@@ -23,7 +21,7 @@ def compute_features(
     low_col: str = "low",
     close_col: str = "close",
     volume_col: str = "volume",
-) -> Tuple[np.ndarray, list[str]]:
+) -> tuple[np.ndarray, list[str]]:
     """
     Compute a deterministic feature matrix from candles.
 

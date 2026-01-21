@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -17,24 +17,24 @@ class BacktestMetrics:
     trade_count: int
     fee_total: float
     slippage_total: float
-    sharpe: Optional[float]
-    cagr: Optional[float]
+    sharpe: float | None
+    cagr: float | None
     # Expanded metrics
-    annualized_return: Optional[float]
-    annualized_volatility: Optional[float]
-    sortino: Optional[float]
-    calmar: Optional[float]
-    max_drawdown_duration_days: Optional[float]
-    win_rate: Optional[float]
-    profit_factor: Optional[float]
-    avg_trade_pnl: Optional[float]
-    turnover: Optional[float]
-    exposure_avg: Optional[float]
-    exposure_max: Optional[float]
-    sharpe_ci_lower: Optional[float]
-    sharpe_ci_upper: Optional[float]
+    annualized_return: float | None
+    annualized_volatility: float | None
+    sortino: float | None
+    calmar: float | None
+    max_drawdown_duration_days: float | None
+    win_rate: float | None
+    profit_factor: float | None
+    avg_trade_pnl: float | None
+    turnover: float | None
+    exposure_avg: float | None
+    exposure_max: float | None
+    sharpe_ci_lower: float | None
+    sharpe_ci_upper: float | None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "initial_cash": self.initial_cash,
             "final_equity": self.final_equity,
@@ -77,10 +77,10 @@ def _annualization_factor(interval_ms: int) -> float:
 
 
 def _compute_max_drawdown_duration(
-    open_time_ms: List[int],
-    drawdown: List[float],
+    open_time_ms: list[int],
+    drawdown: list[float],
     max_dd: float,
-) -> Optional[float]:
+) -> float | None:
     """Compute maximum drawdown duration in days."""
     if not drawdown or max_dd <= 0.0:
         return None
@@ -88,7 +88,7 @@ def _compute_max_drawdown_duration(
     # Find all periods where drawdown >= 90% of max DD
     threshold = max_dd * 0.9
     in_dd = False
-    dd_start_ms: Optional[int] = None
+    dd_start_ms: int | None = None
     max_duration_days = 0.0
     
     for i, (ms, dd) in enumerate(zip(open_time_ms, drawdown)):
@@ -114,12 +114,12 @@ def _compute_max_drawdown_duration(
 
 
 def _bootstrap_sharpe_ci(
-    returns: List[float],
+    returns: list[float],
     interval_ms: int,
     n_bootstrap: int = 1000,
     confidence: float = 0.95,
-    seed: Optional[int] = None,
-) -> Tuple[Optional[float], Optional[float]]:
+    seed: int | None = None,
+) -> tuple[float | None, float | None]:
     """
     Bootstrap confidence interval for Sharpe ratio using block bootstrap.
     
@@ -141,7 +141,7 @@ def _bootstrap_sharpe_ci(
         np.random.seed(seed)
     
     ann_factor = _annualization_factor(interval_ms)
-    sharpe_samples: List[float] = []
+    sharpe_samples: list[float] = []
     
     # Block bootstrap: use daily blocks (approximate)
     # For simplicity, use fixed block size of ~daily returns
@@ -150,7 +150,7 @@ def _bootstrap_sharpe_ci(
     
     for _ in range(n_bootstrap):
         # Sample blocks with replacement
-        bootstrap_returns: List[float] = []
+        bootstrap_returns: list[float] = []
         while len(bootstrap_returns) < len(returns):
             start_idx = random.randint(0, len(returns) - block_size)
             block = returns[start_idx : start_idx + block_size]
@@ -180,16 +180,16 @@ def _bootstrap_sharpe_ci(
 
 def compute_metrics(
     *,
-    open_time_ms: List[int],
-    equity: List[float],
-    drawdown: List[float],
+    open_time_ms: list[int],
+    equity: list[float],
+    drawdown: list[float],
     trade_count: int,
     fee_total: float,
     slippage_total: float,
     interval_ms: int,
-    trades: Optional[List[Dict[str, Any]]] = None,
-    exposure: Optional[List[float]] = None,
-    seed: Optional[int] = None,
+    trades: list[dict[str, Any]] | None = None,
+    exposure: list[float] | None = None,
+    seed: int | None = None,
 ) -> BacktestMetrics:
     if not equity:
         raise ValueError("equity curve is empty")
@@ -202,13 +202,13 @@ def compute_metrics(
     max_dd = float(max(drawdown)) if drawdown else 0.0
 
     # Equity log-returns for Sharpe/Sortino
-    lr: List[float] = []
-    sharpe: Optional[float] = None
-    sortino: Optional[float] = None
-    annualized_return: Optional[float] = None
-    annualized_volatility: Optional[float] = None
-    sharpe_ci_lower: Optional[float] = None
-    sharpe_ci_upper: Optional[float] = None
+    lr: list[float] = []
+    sharpe: float | None = None
+    sortino: float | None = None
+    annualized_return: float | None = None
+    annualized_volatility: float | None = None
+    sharpe_ci_lower: float | None = None
+    sharpe_ci_upper: float | None = None
     
     if len(equity) >= 3:
         for i in range(1, len(equity)):
@@ -247,7 +247,7 @@ def compute_metrics(
                 sortino = (mean_lr / std_downside) * ann_factor
 
     # CAGR (use ms timestamps)
-    cagr: Optional[float] = None
+    cagr: float | None = None
     if open_time_ms and len(open_time_ms) >= 2:
         dur_days = (open_time_ms[-1] - open_time_ms[0]) / 86_400_000.0
         if dur_days > 0.0 and initial_cash > 0.0 and final_equity > 0.0:
@@ -257,7 +257,7 @@ def compute_metrics(
                 cagr = math.exp(math.log(ratio) / years) - 1.0
     
     # Calmar ratio
-    calmar: Optional[float] = None
+    calmar: float | None = None
     if max_dd > 0.0 and cagr is not None:
         calmar = _safe_div(cagr, max_dd)
     
@@ -265,13 +265,13 @@ def compute_metrics(
     max_dd_duration = _compute_max_drawdown_duration(open_time_ms, drawdown, max_dd)
     
     # Trade metrics
-    win_rate: Optional[float] = None
-    profit_factor: Optional[float] = None
-    avg_trade_pnl: Optional[float] = None
-    turnover: Optional[float] = None
+    win_rate: float | None = None
+    profit_factor: float | None = None
+    avg_trade_pnl: float | None = None
+    turnover: float | None = None
     
     if trades:
-        trade_pnls: List[float] = []
+        trade_pnls: list[float] = []
         prev_equity = initial_cash
         
         for trade in trades:
@@ -300,8 +300,8 @@ def compute_metrics(
             turnover = _safe_div(total_notional, initial_cash)
     
     # Exposure stats
-    exposure_avg: Optional[float] = None
-    exposure_max: Optional[float] = None
+    exposure_avg: float | None = None
+    exposure_max: float | None = None
     if exposure:
         exposure_avg = float(sum(exposure) / len(exposure))
         exposure_max = float(max(exposure))

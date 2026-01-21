@@ -145,9 +145,9 @@ def main(argv=None) -> int:
     args, remainder = parser.parse_known_args(argv)
 
     if args.command == "dataset":
+        from autonomous_rl_trading_bot.commands import run_dataset_build, run_dataset_fetch
+        
         if args.subcommand == "fetch":
-            from autonomous_rl_trading_bot.run_fetch import main as fetch_main
-
             forwarded: list[str] = []
 
             if args.mode:
@@ -160,11 +160,9 @@ def main(argv=None) -> int:
                 forwarded += ["--minutes", str(args.minutes)]
 
             forwarded += remainder
-            return int(fetch_main(forwarded))
+            return int(run_dataset_fetch(forwarded))
 
         if args.subcommand == "build":
-            from autonomous_rl_trading_bot.run_dataset import main as dataset_main
-
             forwarded: list[str] = []
 
             if args.mode:
@@ -187,17 +185,17 @@ def main(argv=None) -> int:
                 forwarded += ["--no-strict"]
 
             forwarded += remainder
-            return int(dataset_main(forwarded))
+            return int(run_dataset_build(forwarded))
 
         dataset_parser.print_help()
         return 2
 
     if args.command == "train":
-        from autonomous_rl_trading_bot.run_train import main as train_main
-        return int(train_main(remainder))
+        from autonomous_rl_trading_bot.commands import run_train
+        return int(run_train(remainder))
 
     if args.command == "backtest":
-        from autonomous_rl_trading_bot.backtest.runner import run_backtest
+        from autonomous_rl_trading_bot.commands import run_backtest
         
         # Validate arguments
         if args.run_id and (args.symbol or args.interval):
@@ -228,7 +226,7 @@ def main(argv=None) -> int:
                 output_dir=args.output_dir,
             )
             
-            print(f"\nBacktest complete!")
+            print("\nBacktest complete!")
             print(f"  Report JSON: {result['report_json']}")
             print(f"  Trades CSV: {result['trades_csv']}")
             print(f"  Equity CSV: {result['equity_csv']}")
@@ -245,12 +243,8 @@ def main(argv=None) -> int:
             return 1
 
     if args.command == "live":
-        # Add project root to path to import run_live_demo
-        project_root = Path(__file__).parent.parent.parent
-        if str(project_root) not in sys.path:
-            sys.path.insert(0, str(project_root))
-        import run_live_demo
-        return int(run_live_demo.main(remainder))
+        from autonomous_rl_trading_bot.commands import run_live
+        return int(run_live(remainder))
 
     if args.command == "dashboard":
         # Add project root to path to import run_dashboard
@@ -261,8 +255,8 @@ def main(argv=None) -> int:
         return int(run_dashboard.main(remainder))
 
     if args.command == "baselines":
-        from autonomous_rl_trading_bot.evaluation.baselines import main as baselines_main
-        return int(baselines_main(remainder))
+        from autonomous_rl_trading_bot.commands import run_baselines
+        return int(run_baselines(remainder))
     
     if args.command == "repro":
         from autonomous_rl_trading_bot.repro.runner import run_repro
@@ -279,7 +273,7 @@ def main(argv=None) -> int:
                 output_dir=args.output_dir,
             )
             
-            print(f"\n✓ Reproducibility run complete!")
+            print("\n✓ Reproducibility run complete!")
             print(f"  Run ID: {result['run_id']}")
             print(f"  Run directory: {result['run_dir']}")
             print(f"  Comparison: {result['comparison']}")
@@ -318,7 +312,7 @@ def _run_verify() -> int:
     if result.returncode == 0:
         print("  ✓ pytest PASSED")
     else:
-        print(f"  ✗ pytest FAILED")
+        print("  ✗ pytest FAILED")
         print(result.stdout)
         print(result.stderr)
         all_passed = False

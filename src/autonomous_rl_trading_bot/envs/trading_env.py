@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from typing import Any
+
+import gymnasium as gym
 import numpy as np
 import pandas as pd
-import gymnasium as gym
 from gymnasium import spaces
-from typing import Any, Dict, Optional, Tuple
 
 
 class TradingEnv(gym.Env):
@@ -36,7 +37,7 @@ class TradingEnv(gym.Env):
         hold_threshold: float = 0.1,
         cost_penalty: float = 0.01,
         position_change_penalty: float = 0.005,
-        seed: Optional[int] = None,
+        seed: int | None = None,
     ):
         super().__init__()
         
@@ -101,7 +102,7 @@ class TradingEnv(gym.Env):
         # Seed
         self.seed(seed)
     
-    def seed(self, seed: Optional[int] = None) -> None:
+    def seed(self, seed: int | None = None) -> None:
         """Set random seed."""
         if seed is not None:
             np.random.seed(seed)
@@ -109,9 +110,9 @@ class TradingEnv(gym.Env):
     def reset(
         self,
         *,
-        seed: Optional[int] = None,
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        seed: int | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         """Reset environment to initial state."""
         super().reset(seed=seed)
         
@@ -136,7 +137,7 @@ class TradingEnv(gym.Env):
         info = self._get_info()
         return obs, info
     
-    def step(self, action: int, action_probs: Optional[np.ndarray] = None) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
+    def step(self, action: int, action_probs: np.ndarray | None = None) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """
         Execute one step in the environment.
         
@@ -431,7 +432,7 @@ class TradingEnv(gym.Env):
         
         return obs
     
-    def _get_info(self) -> Dict[str, Any]:
+    def _get_info(self) -> dict[str, Any]:
         """Get info dictionary."""
         row = self.df.iloc[min(self.current_idx, len(self.df) - 1)]
         return {

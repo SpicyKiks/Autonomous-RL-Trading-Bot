@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 from dash import dash_table, html
 
 
-def _df_to_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
+def _df_to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
     if df is None or df.empty:
         return []
     return df.to_dict("records")
@@ -15,7 +15,7 @@ def _df_to_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
 def make_table(
     *,
     table_id: str,
-    df: Optional[pd.DataFrame],
+    df: pd.DataFrame | None,
     page_size: int = 15,
 ) -> dash_table.DataTable:
     df = df if df is not None else pd.DataFrame()

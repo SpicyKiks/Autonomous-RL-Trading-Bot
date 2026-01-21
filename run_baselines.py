@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from autonomous_rl_trading_bot.common.config import load_config
-from autonomous_rl_trading_bot.common.db import connect, migrate
+from autonomous_rl_trading_bot.common.db import migrate
 from autonomous_rl_trading_bot.common.logging import configure_logging
 from autonomous_rl_trading_bot.common.paths import artifacts_dir, ensure_artifact_tree
 from autonomous_rl_trading_bot.common.reproducibility import set_global_seed
@@ -21,14 +21,18 @@ from autonomous_rl_trading_bot.evaluation import (
     run_futures_backtest,
     run_spot_backtest,
 )
-from autonomous_rl_trading_bot.evaluation.reporting import write_equity_csv, write_json, write_trades_csv
+from autonomous_rl_trading_bot.evaluation.reporting import (
+    write_equity_csv,
+    write_json,
+    write_trades_csv,
+)
 
 
 def _utc_ts() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
 
-def _read_dataset_market_type(ds_dir: Path) -> Optional[str]:
+def _read_dataset_market_type(ds_dir: Path) -> str | None:
     mp = ds_dir / "meta.json"
     if not mp.exists():
         return None
@@ -49,7 +53,7 @@ def _latest_dataset_dir(desired_market_type: str) -> Path:
     if desired not in ("spot", "futures"):
         desired = "spot"
 
-    candidates: List[tuple[Path, float]] = []
+    candidates: list[tuple[Path, float]] = []
     for p in base.iterdir():
         if not p.is_dir():
             continue
@@ -67,8 +71,8 @@ def _latest_dataset_dir(desired_market_type: str) -> Path:
 
 
 def _resolve_dataset_dir(
-    dataset_id: Optional[str],
-    dataset_path: Optional[str],
+    dataset_id: str | None,
+    dataset_path: str | None,
     desired_market_type: str,
 ) -> Path:
     """Return dataset_dir."""
@@ -195,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         }),
     ]
     
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     
     for strategy_name, strategy_display, strategy_params in strategies:
         logger.info("Running strategy: %s", strategy_display)
@@ -292,12 +296,12 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _write_comparison_summary(output_path: Path, results: List[Dict[str, Any]]) -> None:
+def _write_comparison_summary(output_path: Path, results: list[dict[str, Any]]) -> None:
     """Write baseline comparison markdown summary."""
     lines = [
         "# Baseline Strategy Comparison",
         "",
-        f"Generated: {datetime.now(timezone.utc).isoformat()}",
+        f"Generated: {datetime.now(UTC).isoformat()}",
         "",
         "## Summary",
         "",

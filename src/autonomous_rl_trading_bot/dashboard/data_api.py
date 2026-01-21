@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 
@@ -38,7 +38,7 @@ class DashboardDataAPI:
             ).fetchall()
         return pd.DataFrame([dict(r) for r in rows])
 
-    def backtests(self, limit: int = 200, market_type: Optional[str] = None) -> pd.DataFrame:
+    def backtests(self, limit: int = 200, market_type: str | None = None) -> pd.DataFrame:
         if market_type:
             sql = """
                 SELECT
@@ -51,7 +51,7 @@ class DashboardDataAPI:
                 ORDER BY started_utc DESC
                 LIMIT ?;
             """
-            params: Tuple[Any, ...] = (market_type, int(limit))
+            params: tuple[Any, ...] = (market_type, int(limit))
         else:
             sql = """
                 SELECT
@@ -89,7 +89,7 @@ class DashboardDataAPI:
     # ─────────────────────────────────────────────────────────────
     # Backtest details
     # ─────────────────────────────────────────────────────────────
-    def backtest_header(self, backtest_id: str) -> Dict[str, Any]:
+    def backtest_header(self, backtest_id: str) -> dict[str, Any]:
         with _connect(self.db_path) as conn:
             row = conn.execute(
                 "SELECT * FROM backtests WHERE backtest_id=?;",
@@ -140,7 +140,7 @@ class DashboardDataAPI:
     # ─────────────────────────────────────────────────────────────
     # Live trading data
     # ─────────────────────────────────────────────────────────────
-    def live_equity(self, run_dir: Optional[Path], run_id: Optional[str] = None) -> pd.DataFrame:
+    def live_equity(self, run_dir: Path | None, run_id: str | None = None) -> pd.DataFrame:
         """Load live equity from CSV (if exists) or database (during run)."""
         if not run_dir:
             return pd.DataFrame()
@@ -173,7 +173,7 @@ class DashboardDataAPI:
         
         return pd.DataFrame()
 
-    def live_trades(self, run_dir: Optional[Path], run_id: Optional[str] = None) -> pd.DataFrame:
+    def live_trades(self, run_dir: Path | None, run_id: str | None = None) -> pd.DataFrame:
         """Load live trades from CSV (if exists) or database (during run)."""
         if not run_dir:
             return pd.DataFrame()
@@ -218,7 +218,7 @@ class DashboardDataAPI:
         
         return pd.DataFrame()
 
-    def live_metrics(self, run_dir: Optional[Path]) -> Dict[str, Any]:
+    def live_metrics(self, run_dir: Path | None) -> dict[str, Any]:
         """Load live metrics JSON."""
         if not run_dir:
             return {}

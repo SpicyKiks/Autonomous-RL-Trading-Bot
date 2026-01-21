@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from autonomous_rl_trading_bot.features.alignment import asof_align, asof_align_many
 

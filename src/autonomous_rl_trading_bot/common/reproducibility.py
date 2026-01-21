@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import os
 import random
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 
 
-def set_global_seed(seed: int) -> Dict[str, Any]:
+def set_global_seed(seed: int) -> dict[str, Any]:
     """
     Set seeds for reproducibility. Torch is optional.
     Returns a report dict for run.json.
     """
-    report: Dict[str, Any] = {"seed": seed}
+    report: dict[str, Any] = {"seed": seed}
 
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)

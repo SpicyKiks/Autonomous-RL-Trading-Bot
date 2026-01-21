@@ -9,6 +9,13 @@ def make_layout(db_path_str: str) -> html.Div:
     return html.Div(
         [
             html.H2("Autonomous RL Trading Bot — Dashboard"),
+            html.Div(
+                [
+                    html.Div("DB:", style={"fontWeight": "bold", "marginRight": "8px"}),
+                    html.Code(db_path_str),
+                ],
+                style={"marginBottom": "10px"},
+            ),
 
             dcc.Interval(id="tick", interval=4000, n_intervals=0),  # 4 seconds default refresh
 
@@ -231,6 +238,31 @@ def make_layout(db_path_str: str) -> html.Div:
                                     ),
                                 ],
                                 style={"marginBottom": "12px"},
+                            ),
+
+                            html.Div(
+                                [
+                                    html.H4("Error Details", style={"color": "#d32f2f", "marginBottom": "8px"}),
+                                    html.Div(
+                                        id="live-error",
+                                        children="No errors",
+                                        style={
+                                            "border": "2px solid #d32f2f",
+                                            "borderRadius": "4px",
+                                            "padding": "12px",
+                                            "backgroundColor": "#ffebee",
+                                            "color": "#c62828",
+                                            "fontFamily": "monospace",
+                                            "fontSize": "12px",
+                                            "maxHeight": "300px",
+                                            "overflowY": "auto",
+                                            "whiteSpace": "pre-wrap",
+                                            "wordBreak": "break-word",
+                                        },
+                                    ),
+                                ],
+                                id="live-error-container",
+                                style={"marginBottom": "12px", "display": "none"},
                             ),
 
                             html.H4("Live Trading Data"),

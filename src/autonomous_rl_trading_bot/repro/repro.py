@@ -3,9 +3,9 @@ from __future__ import annotations
 import os
 import platform
 import sys
-from dataclasses import is_dataclass, asdict
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 try:
     import numpy as np
@@ -30,16 +30,16 @@ def _safe_str(x: Any) -> str:
         return repr(x)
 
 
-def _env_subset(prefixes: tuple[str, ...] = ("ARBT_", "PYTHON", "CUDA", "CUBLAS", "CUDNN")) -> Dict[str, str]:
-    out: Dict[str, str] = {}
+def _env_subset(prefixes: tuple[str, ...] = ("ARBT_", "PYTHON", "CUDA", "CUBLAS", "CUDNN")) -> dict[str, str]:
+    out: dict[str, str] = {}
     for k, v in os.environ.items():
         if k.startswith(prefixes):
             out[k] = v
     return dict(sorted(out.items(), key=lambda kv: kv[0]))
 
 
-def _pkg_versions() -> Dict[str, str]:
-    versions: Dict[str, str] = {}
+def _pkg_versions() -> dict[str, str]:
+    versions: dict[str, str] = {}
     # standard library metadata (py3.11)
     try:
         from importlib.metadata import version as _version
@@ -67,11 +67,11 @@ def _pkg_versions() -> Dict[str, str]:
     return versions
 
 
-def _torch_info() -> Dict[str, Any]:
+def _torch_info() -> dict[str, Any]:
     if torch is None:
         return {"available": False}
 
-    info: Dict[str, Any] = {"available": True}
+    info: dict[str, Any] = {"available": True}
     try:
         info["version"] = torch.__version__
         info["cuda_available"] = bool(torch.cuda.is_available())
@@ -84,13 +84,13 @@ def _torch_info() -> Dict[str, Any]:
     return info
 
 
-def _numpy_info() -> Dict[str, Any]:
+def _numpy_info() -> dict[str, Any]:
     if np is None:
         return {"available": False}
     return {"available": True, "version": getattr(np, "__version__", None)}
 
 
-def _pandas_info() -> Dict[str, Any]:
+def _pandas_info() -> dict[str, Any]:
     if pd is None:
         return {"available": False}
     return {"available": True, "version": getattr(pd, "__version__", None)}
@@ -102,7 +102,7 @@ def _asdict_if_needed(obj: Any) -> Any:
     return obj
 
 
-def build_repro_payload(config: Any | None = None, extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
+def build_repro_payload(config: Any | None = None, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Build a reproducibility payload saved alongside artifacts.
 
@@ -111,7 +111,7 @@ def build_repro_payload(config: Any | None = None, extra: Dict[str, Any] | None 
 
     Keep it dependency-light and never crash training.
     """
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "python": {
             "version": sys.version,
             "executable": sys.executable,

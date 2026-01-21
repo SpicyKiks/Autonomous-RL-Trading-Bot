@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
 
 from autonomous_rl_trading_bot.common.logging import configure_logging
 from autonomous_rl_trading_bot.common.time import utc_now_compact
@@ -49,7 +47,7 @@ def _find_latest_dataset_id(*, mode: str) -> str:
     return candidates[0].name
 
 
-def _resolve_policy_path(policy_arg: str, logger) -> Optional[Path]:
+def _resolve_policy_path(policy_arg: str, logger) -> Path | None:
     """
     Robustly resolve a policy file path.
     
@@ -127,7 +125,7 @@ def _resolve_policy_path(policy_arg: str, logger) -> Optional[Path]:
     return None
 
 
-def _find_policy_zip_in_dir(directory: Path, logger) -> Optional[Path]:
+def _find_policy_zip_in_dir(directory: Path, logger) -> Path | None:
     """
     Find a policy zip file in a directory, following priority order:
     1. policy.zip
@@ -171,7 +169,7 @@ def _find_policy_zip_in_dir(directory: Path, logger) -> Optional[Path]:
     return None
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="arbt backtest", description="Run backtest evaluation (baseline + reporting artifacts).")
     parser.add_argument("--mode", choices=["spot", "futures"], required=True)
     parser.add_argument("--policy", default=None, help="Path to SB3 policy.zip file, or baseline strategy name (default: baseline). If path ends with .zip, loads SB3 model.")
@@ -261,7 +259,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                         dir_contents[str(parent)] = all_files[:20]  # Limit to first 20
             
             error_msg = f"Policy file not found: {policy_arg}\n"
-            error_msg += f"\nTried paths:\n"
+            error_msg += "\nTried paths:\n"
             for tp in tried_paths:
                 tp_path = Path(tp)
                 status = ""
@@ -288,7 +286,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                     for fname in files:
                         error_msg += f"    - {fname}\n"
                     if len(files) == 20:
-                        error_msg += f"    ... (showing first 20 files)\n"
+                        error_msg += "    ... (showing first 20 files)\n"
             
             # Suggest checking for other run directories or retraining
             runs_dir = _artifacts_dir() / "runs"
@@ -297,7 +295,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                     recent_runs = sorted([d for d in runs_dir.iterdir() if d.is_dir()], 
                                         key=lambda x: x.stat().st_mtime, reverse=True)[:5]
                     if recent_runs:
-                        error_msg += f"\nRecent training runs (check these for policy.zip):\n"
+                        error_msg += "\nRecent training runs (check these for policy.zip):\n"
                         for run_dir in recent_runs:
                             try:
                                 has_zip = any(f.suffix == ".zip" for f in run_dir.iterdir() if f.is_file())

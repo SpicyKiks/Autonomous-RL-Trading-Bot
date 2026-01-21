@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import os
-import tempfile
-from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from autonomous_rl_trading_bot.training.train_pipeline import (
+    evaluate_ppo,
     load_dataset,
     split_dataset,
     train_ppo,
-    evaluate_ppo,
 )
 
 

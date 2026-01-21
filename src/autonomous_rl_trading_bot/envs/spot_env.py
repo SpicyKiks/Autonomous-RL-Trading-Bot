@@ -3,12 +3,17 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import gymnasium as gym
 import numpy as np
 
-from autonomous_rl_trading_bot.envs.base_env import TradingEnvBase, calc_drawdown, flatten_obs, window_view
+from autonomous_rl_trading_bot.envs.base_env import (
+    TradingEnvBase,
+    calc_drawdown,
+    flatten_obs,
+    window_view,
+)
 from autonomous_rl_trading_bot.envs.fees_slippage import execute_spot_buy, execute_spot_sell
 from autonomous_rl_trading_bot.envs.rewards import log_equity_return
 
@@ -60,7 +65,7 @@ class SpotPortfolio:
         return float((float(price) - float(self.avg_entry_price)) * self.qty_base)
 
 
-def _load_npz(npz_path: Path) -> Dict[str, np.ndarray]:
+def _load_npz(npz_path: Path) -> dict[str, np.ndarray]:
     arrays = dict(np.load(npz_path, allow_pickle=False))
     if "close" not in arrays:
         raise ValueError(f"dataset.npz missing required key 'close': {npz_path}")
@@ -85,7 +90,7 @@ class SpotEnv(TradingEnvBase):
         *,
         close: np.ndarray,
         features: np.ndarray,
-        open_time_ms: Optional[np.ndarray] = None,
+        open_time_ms: np.ndarray | None = None,
         cfg: SpotEnvConfig = SpotEnvConfig(),
         seed: int = 0,
     ) -> None:
@@ -135,8 +140,8 @@ class SpotEnv(TradingEnvBase):
         *,
         cfg: SpotEnvConfig = SpotEnvConfig(),
         seed: int = 0,
-        feature_keys: Optional[List[str]] = None,
-    ) -> "SpotEnv":
+        feature_keys: list[str] | None = None,
+    ) -> SpotEnv:
         """Load dataset.npz (+ optional meta.json) from a dataset directory."""
         dataset_dir = Path(dataset_dir)
         meta_path = dataset_dir / "meta.json"
@@ -157,7 +162,7 @@ class SpotEnv(TradingEnvBase):
         if not feature_keys:
             feature_keys = ["log_return"] if "log_return" in arrays else []
 
-        feats: List[np.ndarray] = []
+        feats: list[np.ndarray] = []
         for k in feature_keys:
             if k not in arrays:
                 continue
@@ -176,7 +181,7 @@ class SpotEnv(TradingEnvBase):
         open_time = arrays.get("open_time_ms", None)
         return SpotEnv(close=arrays["close"], features=features, open_time_ms=open_time, cfg=cfg, seed=seed)
 
-    def reset(self, *, seed: Optional[int] = None, options=None):  # type: ignore[override]
+    def reset(self, *, seed: int | None = None, options=None):  # type: ignore[override]
         super().reset(seed=seed, options=options)
 
         self._i = int(self.cfg.lookback - 1)
@@ -325,14 +330,14 @@ class SpotEnv(TradingEnvBase):
         w = window_view(self.features, self._i, int(self.cfg.lookback))
         return flatten_obs(w, self._account_vec())
 
-    def _info_dict(self, *, action: Optional[int], trade: Optional[Dict[str, Any]], killed: bool, reason: str) -> Dict[str, Any]:
+    def _info_dict(self, *, action: int | None, trade: dict[str, Any] | None, killed: bool, reason: str) -> dict[str, Any]:
         price = float(self.close[self._i])
         ts = None
         if self.open_time_ms is not None:
             ts = int(self.open_time_ms[self._i])
 
         eq = self._portfolio.equity(price)
-        info: Dict[str, Any] = {
+        info: dict[str, Any] = {
             "i": int(self._i),
             "ts_ms": ts,
             "price": float(price),

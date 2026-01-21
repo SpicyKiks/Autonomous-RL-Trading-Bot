@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Optional
-
+from typing import Literal
 
 Side = Literal["buy", "sell"]
 
@@ -47,7 +46,7 @@ def execute_spot_buy(
     order_size_quote: float,
     taker_fee_rate: float,
     slippage_bps: float,
-) -> Optional[SpotExecResult]:
+) -> SpotExecResult | None:
     """Market BUY on spot.
 
     order_size_quote:
@@ -105,7 +104,7 @@ def execute_spot_sell(
     taker_fee_rate: float,
     slippage_bps: float,
     close_all: bool,
-) -> Optional[SpotExecResult]:
+) -> SpotExecResult | None:
     """Market SELL on spot.
 
     If close_all True => sell entire qty_base.

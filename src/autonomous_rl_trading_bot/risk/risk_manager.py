@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
 
 from autonomous_rl_trading_bot.common.types import AccountSnapshot, OrderRequest, RiskDecision
 
@@ -13,7 +12,7 @@ class RiskContext:
     mode_id: str
     symbol: str
     ts_ms: int
-    last_price: Optional[float] = None
+    last_price: float | None = None
 
 
 class RiskManager(ABC):

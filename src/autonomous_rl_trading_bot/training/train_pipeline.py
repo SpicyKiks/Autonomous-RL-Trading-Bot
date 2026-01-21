@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -52,7 +52,7 @@ def load_dataset(
 def split_dataset(
     df: pd.DataFrame,
     train_split: float = 0.8,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Split dataset into train and test sets chronologically.
     
@@ -81,7 +81,7 @@ def train_ppo(
     *,
     timesteps: int = 500000,
     seed: int = 42,
-    tensorboard_log_dir: Optional[str] = None,
+    tensorboard_log_dir: str | None = None,
     model_out: str = "models/ppo_trader.zip",
     taker_fee: float = 0.0004,
     slippage_bps: float = 1.0,
@@ -190,7 +190,7 @@ def evaluate_ppo(
     position_fraction: float = 1.0,
     initial_balance: float = 10000.0,
     report_out: str = "reports/training_metrics.json",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Evaluate trained PPO model on test dataset.
     
@@ -235,7 +235,7 @@ def evaluate_ppo(
     
     equity_history: list[float] = [initial_balance]
     rewards: list[float] = []
-    trades: list[Dict[str, Any]] = []
+    trades: list[dict[str, Any]] = []
     last_trade_count = 0
     
     while not done:

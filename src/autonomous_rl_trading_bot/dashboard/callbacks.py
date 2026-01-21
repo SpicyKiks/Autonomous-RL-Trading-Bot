@@ -122,6 +122,8 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
     # ─────────────────────────────────────────────────────────────
     @app.callback(
         Output("live-status", "children"),
+        Output("live-error", "children"),
+        Output("live-error-container", "style"),
         Output("live-start-btn", "disabled"),
         Output("live-stop-btn", "disabled"),
         Input("live-start-btn", "n_clicks"),
@@ -152,40 +154,20 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
         max_minutes: Optional[float],
     ):
         session = get_session()
+        error_msg = ""
 
-        # Poll thread completion: check if thread finished and update status
-        if session.thread is not None:
-            if not session.thread.is_alive():
-                # Thread finished - update status to DONE if it was RUNNING/STOPPING
-                if session.status in (SessionStatus.RUNNING, SessionStatus.STOPPING):
-                    session.status = SessionStatus.DONE
-                    session.thread = None  # Clear thread reference
-
-        # Track button clicks to prevent duplicate processing
-        # Only process if clicks have increased (button was actually clicked)
-        stop_clicked = stop_clicks > session.last_stop_clicks
-        start_clicked = start_clicks > session.last_start_clicks
-        
-        # Update tracked click counts
-        if stop_clicked:
-            session.last_stop_clicks = stop_clicks
-        if start_clicked:
-            session.last_start_clicks = start_clicks
-
-        # Handle stop button FIRST (prevents stop from being ignored if start is also clicked)
-        if stop_clicked:
+        # Handle stop button
+        if stop_clicks > 0:
             try:
                 stop_trading()
-                # After stopping, don't process start button on same callback
-                start_clicked = False
             except Exception as e:
-                pass  # Silently ignore errors
+                error_msg = f"Error stopping: {e}"
 
-        # Handle start button (only if not stopped in this callback)
-        if start_clicked:
-            # Guard: only start if session is IDLE or DONE
-            if session.status not in (SessionStatus.IDLE, SessionStatus.DONE):
-                pass  # Silently ignore if already running or stopping
+        # Handle start button
+        if start_clicks > 0:
+            # Guard: only start if session is IDLE
+            if session.status != SessionStatus.IDLE:
+                error_msg = f"Session already {session.status.value}. Stop it first."
             else:
                 try:
                     # Build args list for run_live_demo.main()
@@ -211,6 +193,7 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
 
                     # Generate unique run_id and run_dir (mimic run_live_demo logic)
                     from datetime import datetime, timezone
+                    import traceback
                     import logging
                     from autonomous_rl_trading_bot.common.paths import artifacts_dir
                     from autonomous_rl_trading_bot.common.hashing import short_hash
@@ -237,6 +220,7 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
                     start_trading(args_list, run_id, run_dir)
                 except Exception as e:
                     import traceback
+                    error_msg = f"Error starting: {e}\n\n{traceback.format_exc()}"
                     session.status = SessionStatus.ERROR
                     session.last_error = str(e)
                     session.last_error_traceback = traceback.format_exc()
@@ -247,10 +231,23 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
             status_text += f" | Run ID: {session.run_id}"
 
         # Button states
-        start_disabled = session.status in (SessionStatus.RUNNING, SessionStatus.STOPPING)
-        stop_disabled = session.status not in (SessionStatus.RUNNING, SessionStatus.STOPPING, SessionStatus.DONE)
+        start_disabled = session.status == SessionStatus.RUNNING
+        stop_disabled = session.status != SessionStatus.RUNNING
 
-        return status_text, start_disabled, stop_disabled
+        # Build comprehensive error message
+        display_error = "No errors"
+        error_style = {"marginBottom": "12px", "display": "none"}
+        
+        if error_msg:
+            display_error = error_msg
+            error_style = {"marginBottom": "12px"}
+        elif session.last_error:
+            display_error = session.last_error
+            if getattr(session, 'last_error_traceback', None):
+                display_error = f"{session.last_error}\n\nFull Traceback:\n{session.last_error_traceback}"
+            error_style = {"marginBottom": "12px"}
+
+        return status_text, display_error, error_style, start_disabled, stop_disabled
 
     # ─────────────────────────────────────────────────────────────
     # Live trading: display data (equity, trades, logs)
@@ -265,15 +262,14 @@ def register_callbacks(app, api: DashboardDataAPI) -> None:
     def _live_trading_data(_: int):
         session = get_session()
 
-        # Show data when RUNNING, STOPPING, DONE, or ERROR, and run_dir is set
         if session.status == SessionStatus.IDLE or not session.run_dir:
             fig = go.Figure()
             fig.update_layout(title="No active trading session")
             return [], fig, make_table(table_id="live-trades-table", df=pd.DataFrame(), page_size=12), "No logs"
 
-        # Load data (pass run_id to read from database during active run)
-        eq = api.live_equity(session.run_dir, run_id=session.run_id)
-        tr = api.live_trades(session.run_dir, run_id=session.run_id)
+        # Load data
+        eq = api.live_equity(session.run_dir)
+        tr = api.live_trades(session.run_dir)
         metrics = api.live_metrics(session.run_dir)
 
         # Cards

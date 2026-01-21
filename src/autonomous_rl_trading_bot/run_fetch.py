@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
-import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Tuple
+from typing import Any
 
 import ccxt  # type: ignore
 
 from autonomous_rl_trading_bot.common.config import load_config
 from autonomous_rl_trading_bot.common.db import migrate
 from autonomous_rl_trading_bot.common.logging import get_logger
-
 
 log = get_logger("arbt")
 
@@ -74,7 +71,7 @@ def _insert_candles(
     market_type: str,
     symbol: str,
     interval: str,
-    rows: List[List[Any]],
+    rows: list[list[Any]],
 ) -> int:
     """
     rows are ccxt OHLCV: [timestamp_ms, open, high, low, close, volume]
@@ -141,7 +138,7 @@ def _count_available(conn: sqlite3.Connection, exchange: str, market_type: str, 
     return int(cur.fetchone()[0])
 
 
-def _minmax_open_time(conn: sqlite3.Connection, exchange: str, market_type: str, symbol: str, interval: str) -> Tuple[Optional[int], Optional[int]]:
+def _minmax_open_time(conn: sqlite3.Connection, exchange: str, market_type: str, symbol: str, interval: str) -> tuple[int | None, int | None]:
     cur = conn.cursor()
     cur.execute(
         """
@@ -167,7 +164,7 @@ def fetch_candles_paged(
     interval: str,
     minutes: int,
     limit: int = EXCHANGE_LIMIT_DEFAULT,
-) -> List[List[Any]]:
+) -> list[list[Any]]:
     """
     Fetch candles from (now - minutes*interval) forward to now, in pages of `limit`.
     Returns all rows in chronological order (as best effort).
@@ -181,7 +178,7 @@ def fetch_candles_paged(
 
     # Fetch from start_ms forward, paging by last_open_time + interval_ms
     since_ms = start_ms
-    all_rows: List[List[Any]] = []
+    all_rows: list[list[Any]] = []
     safety = 0
 
     while since_ms < now_ms:
@@ -238,7 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     loaded = load_config()

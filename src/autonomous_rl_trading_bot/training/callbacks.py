@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 try:
     from stable_baselines3.common.callbacks import (
@@ -29,7 +28,7 @@ class CallbackConfig:
 def build_callbacks(
     *,
     run_dir: Path,
-    eval_env: Optional["VecEnv"],
+    eval_env: VecEnv | None,
     cfg: CallbackConfig,
 ) -> CallbackList:
     """

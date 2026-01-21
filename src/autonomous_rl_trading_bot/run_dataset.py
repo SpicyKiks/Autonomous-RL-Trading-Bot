@@ -4,9 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from autonomous_rl_trading_bot.common.config import load_config
 from autonomous_rl_trading_bot.common.db import connect, migrate, upsert_run
@@ -18,7 +18,7 @@ from autonomous_rl_trading_bot.data.dataset_builder import build_dataset_from_db
 
 
 def _utc_ts() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
 
 def _now_ms() -> int:
@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     seed = int(cfg["run"]["seed"])
     seed_report = set_global_seed(seed)
 
-    created_utc = datetime.now(timezone.utc).isoformat()
+    created_utc = datetime.now(UTC).isoformat()
     run_json_path = str(run_dir / "run.json")
 
     with connect(db_path) as conn:
@@ -144,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             scaler_type=scaler_type,
         )
 
-    run_meta: Dict[str, Any] = {
+    run_meta: dict[str, Any] = {
         "run_id": run_id,
         "created_utc": created_utc,
         "kind": "dataset",

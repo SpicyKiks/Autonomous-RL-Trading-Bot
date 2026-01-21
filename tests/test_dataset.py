@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import os
 import math
-import pandas as pd
-import numpy as np
+import os
 
-from autonomous_rl_trading_bot.data.feature_engineering import compute_features, causal_zscore
+import numpy as np
+import pandas as pd
+
+from autonomous_rl_trading_bot.data.feature_engineering import causal_zscore, compute_features
 
 
 def test_dataset_integrity_and_no_nan_inf():

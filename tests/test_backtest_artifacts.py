@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-import pytest
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from autonomous_rl_trading_bot.backtest.runner import run_backtest
 
@@ -67,7 +67,7 @@ def test_backtest_artifacts_columns():
     report_json = Path(result["report_json"])
     assert report_json.exists(), f"Report JSON not created: {report_json}"
     
-    with open(report_json, "r") as f:
+    with open(report_json) as f:
         metrics = json.load(f)
     
     required_report_keys = [

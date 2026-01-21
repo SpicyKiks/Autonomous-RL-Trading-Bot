@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import csv
 import json
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Any
 
 import pandas as pd
 
 
 def _iso_utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _json_serialize_paths(obj: Any) -> Any:
@@ -25,23 +26,23 @@ def _json_serialize_paths(obj: Any) -> Any:
         return obj
 
 
-def write_json(path: Path, payload: Dict[str, Any]) -> None:
+def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = _json_serialize_paths(payload)
     path.write_text(json.dumps(serialized, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def read_json(path: Path) -> Dict[str, Any]:
+def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def write_equity_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
+def write_equity_csv(path: Path, rows: list[Mapping[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         path.write_text("", encoding="utf-8")
         return
 
-    keys: List[str] = []
+    keys: list[str] = []
     for k in ("t", "step", "open_time_ms", "equity"):
         if k in rows[0]:
             keys.append(k)
@@ -56,7 +57,7 @@ def write_equity_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
             w.writerow(dict(r))
 
 
-def write_trades_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
+def write_trades_csv(path: Path, rows: list[Mapping[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         path.write_text("", encoding="utf-8")
@@ -78,7 +79,7 @@ def write_trades_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
         "realized_pnl",
         "reason",
     ]
-    keys: List[str] = []
+    keys: list[str] = []
     for k in pref:
         if k in rows[0]:
             keys.append(k)
@@ -93,7 +94,7 @@ def write_trades_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
             w.writerow(dict(r))
 
 
-def compute_trades_summary(trades_rows: Union[List[Dict[str, Any]], pd.DataFrame]) -> Dict[str, Any]:
+def compute_trades_summary(trades_rows: list[dict[str, Any]] | pd.DataFrame) -> dict[str, Any]:
     if isinstance(trades_rows, pd.DataFrame):
         rows = trades_rows.to_dict(orient="records")
     else:
@@ -124,7 +125,7 @@ def compute_trades_summary(trades_rows: Union[List[Dict[str, Any]], pd.DataFrame
             except Exception:
                 pass
 
-    summary: Dict[str, Any] = {"count": count}
+    summary: dict[str, Any] = {"count": count}
     if pnl_vals:
         summary["pnl_sum"] = float(sum(pnl_vals))
         summary["pnl_mean"] = float(sum(pnl_vals) / max(len(pnl_vals), 1))
@@ -137,7 +138,7 @@ def compute_trades_summary(trades_rows: Union[List[Dict[str, Any]], pd.DataFrame
     return summary
 
 
-def metrics_to_markdown(metrics: Dict[str, Any]) -> str:
+def metrics_to_markdown(metrics: dict[str, Any]) -> str:
     lines = ["# Metrics", ""]
     for k in sorted(metrics.keys()):
         v = metrics[k]
@@ -153,9 +154,9 @@ def generate_html_report(
     out_dir: Path,
     *,
     title: str,
-    metrics: Dict[str, Any],
-    trades_summary: Dict[str, Any],
-    repro: Dict[str, Any],
+    metrics: dict[str, Any],
+    trades_summary: dict[str, Any],
+    repro: dict[str, Any],
     equity_png_name: str,
     drawdown_png_name: str,
 ) -> Path:
@@ -286,9 +287,9 @@ def generate_pdf_report(
     out_dir: Path,
     *,
     title: str,
-    metrics: Dict[str, Any],
-    trades_summary: Dict[str, Any],
-    repro: Dict[str, Any],
+    metrics: dict[str, Any],
+    trades_summary: dict[str, Any],
+    repro: dict[str, Any],
     equity_png_path: Path,
     drawdown_png_path: Path,
 ) -> Path:
@@ -377,14 +378,14 @@ def build_repro_payload(
     *,
     seed: int,
     dataset_id: str,
-    dataset_hash: Optional[str] = None,
+    dataset_hash: str | None = None,
     kind: str = "run",
     run_id: str = "unknown",
     mode: str = "unknown",
-    config_hash: Optional[str] = None,
-    extra: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
+    config_hash: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "kind": kind,
         "run_id": run_id,
         "dataset_id": dataset_id,
@@ -403,11 +404,11 @@ def generate_run_report(
     out_dir: Path,
     *,
     title: str,
-    equity_rows: Union[List[Dict[str, Any]], pd.DataFrame],
-    trades_rows: Union[List[Dict[str, Any]], pd.DataFrame],
-    metrics: Dict[str, Any],
-    repro: Dict[str, Any],
-) -> Dict[str, Path]:
+    equity_rows: list[dict[str, Any]] | pd.DataFrame,
+    trades_rows: list[dict[str, Any]] | pd.DataFrame,
+    metrics: dict[str, Any],
+    repro: dict[str, Any],
+) -> dict[str, Path]:
     from autonomous_rl_trading_bot.evaluation.plots import plot_drawdown, plot_equity_curve
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -466,7 +467,7 @@ def generate_run_report(
         drawdown_png_path=drawdown_png,
     )
 
-    artifacts: Dict[str, Path] = {
+    artifacts: dict[str, Path] = {
         "equity_curve": equity_png,
         "drawdown": drawdown_png,
         "equity_csv": equity_csv,

@@ -11,12 +11,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pandas as pd
 
 
-def find_latest_backtest_report(reports_dir: Path) -> Optional[Path]:
+def find_latest_backtest_report(reports_dir: Path) -> Path | None:
     """Find the latest backtest_report.json."""
     candidates = list(reports_dir.rglob("backtest_report.json"))
     if not candidates:
@@ -27,7 +27,7 @@ def find_latest_backtest_report(reports_dir: Path) -> Optional[Path]:
     return candidates[0]
 
 
-def load_dataset_stats(symbol: str, interval: str) -> Dict[str, Any]:
+def load_dataset_stats(symbol: str, interval: str) -> dict[str, Any]:
     """Load dataset statistics from parquet files."""
     dataset_path = Path(f"data/processed/{symbol.upper()}_{interval}_dataset.parquet")
     
@@ -71,10 +71,10 @@ def load_dataset_stats(symbol: str, interval: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def compute_integrity_check(report_path: Path, equity_csv_path: Optional[Path] = None) -> Dict[str, Any]:
+def compute_integrity_check(report_path: Path, equity_csv_path: Path | None = None) -> dict[str, Any]:
     """Compute integrity check: verify final_equity matches last equity in curve."""
     try:
-        with open(report_path, "r") as f:
+        with open(report_path) as f:
             report = json.load(f)
         
         final_equity_report = report.get("final_equity", 0.0)
@@ -141,7 +141,7 @@ def main() -> int:
     # Load report if available
     report_data = {}
     if latest_report:
-        with open(latest_report, "r") as f:
+        with open(latest_report) as f:
             report_data = json.load(f)
     
     # Generate markdown

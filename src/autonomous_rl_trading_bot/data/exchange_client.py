@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from autonomous_rl_trading_bot.data.ohlcv import MarketType, OhlcvBar, validate_bars
 
@@ -59,7 +59,7 @@ def to_ccxt_symbol(symbol: str) -> str:
 class ExchangeFetchSpec:
     symbol: str
     timeframe: str
-    since_ms: Optional[int] = None
+    since_ms: int | None = None
     limit: int = 1000
 
 

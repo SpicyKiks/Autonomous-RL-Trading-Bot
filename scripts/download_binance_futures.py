@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import ccxt
 import pandas as pd
@@ -110,7 +110,7 @@ def main() -> int:
     symbol_in = args.symbol.strip()
     symbol_ccxt = _normalize_symbol(symbol_in, args.exchange)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     start = now - timedelta(days=args.days)
     start_ms = _to_ms(start)
     end_ms = _to_ms(now)

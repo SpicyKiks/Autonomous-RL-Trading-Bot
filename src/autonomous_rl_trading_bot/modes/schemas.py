@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any
 
 from autonomous_rl_trading_bot.common.exceptions import ConfigError
 
@@ -48,7 +49,7 @@ class ModeRuntimeConfig:
     default_interval: str
     default_limit: int
 
-    db_path: Optional[str] = None
+    db_path: str | None = None
 
 
 def validate_root_config(cfg: Mapping[str, Any]) -> ModeRuntimeConfig:

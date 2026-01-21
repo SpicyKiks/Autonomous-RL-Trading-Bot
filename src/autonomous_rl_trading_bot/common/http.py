@@ -5,7 +5,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -21,7 +21,7 @@ class HttpRequestError(RuntimeError):
 def get_json(
     url: str,
     *,
-    headers: Optional[Dict[str, str]] = None,
+    headers: dict[str, str] | None = None,
     timeout_s: float = 10.0,
     max_retries: int = 6,
     backoff_s: float = 0.5,
@@ -31,7 +31,7 @@ def get_json(
     Stdlib only.
     """
     hdrs = headers or {}
-    last_err: Optional[BaseException] = None
+    last_err: BaseException | None = None
 
     for attempt in range(max_retries):
         try:

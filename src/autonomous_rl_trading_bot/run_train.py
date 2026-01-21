@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from autonomous_rl_trading_bot.common.config import load_config
 from autonomous_rl_trading_bot.common.db import connect, migrate, upsert_run
@@ -18,11 +18,11 @@ from autonomous_rl_trading_bot.training.trainer import TrainConfig, train_and_ev
 
 
 def _utc_ts() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _iso_utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _make_run_id(mode: str, dataset_id: str, algo: str, cfg_hash: str) -> str:
@@ -38,10 +38,10 @@ def _train_day2_parquet(
     """Day-2 training pipeline using parquet dataset."""
     from autonomous_rl_trading_bot.common.reproducibility import set_global_seed
     from autonomous_rl_trading_bot.training.train_pipeline import (
+        evaluate_ppo,
         load_dataset,
         split_dataset,
         train_ppo,
-        evaluate_ppo,
     )
     
     # Set seed
@@ -66,7 +66,7 @@ def _train_day2_parquet(
     if args.smoke_test and len(df) > 1000:
         df = df.iloc[:1000].copy()
         if logger_info:
-            logger_info(f"[Smoke test] Using first 1000 rows")
+            logger_info("[Smoke test] Using first 1000 rows")
     
     # Split dataset
     train_df, test_df = split_dataset(df, train_split=train_split)
@@ -133,7 +133,7 @@ def _train_day2_parquet(
     metrics = {}
     if args.eval and not args.no_eval:
         if logger_info:
-            logger_info(f"[Day-2] Evaluating on test set...")
+            logger_info("[Day-2] Evaluating on test set...")
         
         metrics = evaluate_ppo(
             model_path,
@@ -147,7 +147,7 @@ def _train_day2_parquet(
         )
         
         if logger_info:
-            logger_info(f"[Day-2] Evaluation complete. Metrics:")
+            logger_info("[Day-2] Evaluation complete. Metrics:")
             logger_info(f"  Total Return: {metrics.get('total_return', 0):.4f}")
             logger_info(f"  Sharpe Ratio: {metrics.get('sharpe', 0):.4f}")
             logger_info(f"  Max Drawdown: {metrics.get('max_drawdown', 0):.4f}")
@@ -243,8 +243,8 @@ def main(argv: list[str] | None = None) -> int:
     log_console = bool((cfg.get("logging", {}) or {}).get("console", True))
     log_file = bool((cfg.get("logging", {}) or {}).get("file", True))
 
-    per_run_log: Optional[str] = None
-    global_log: Optional[str] = None
+    per_run_log: str | None = None
+    global_log: str | None = None
     log_paths = []
 
     if log_file:
@@ -290,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
         models_dir=artifacts_dir() / "models",
     )
 
-    run_meta: Dict[str, Any] = {
+    run_meta: dict[str, Any] = {
         "run_id": run_id,
         "created_utc": created_utc,
         "kind": "train",
@@ -343,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("run_id=%s market_type=%s dataset_id=%s algo=%s timesteps=%s", run_id, market_type, dataset_id, algo, tcfg.timesteps)
 
     status = "DONE"
-    finished_utc: Optional[str] = None
+    finished_utc: str | None = None
     try:
         with connect(db_path) as conn:
             upsert_run(

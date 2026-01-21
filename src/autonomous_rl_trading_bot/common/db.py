@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .exceptions import ConfigError
 from .paths import artifacts_dir, repo_root
@@ -13,10 +13,10 @@ _MIGRATION_RE = re.compile(r"^(?P<ver>\d+)_.*\.sql$")
 
 
 def _utc_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def default_db_path(cfg: Dict[str, Any]) -> Path:
+def default_db_path(cfg: dict[str, Any]) -> Path:
     """
     If cfg['db']['path'] is set:
       - absolute path is used directly
@@ -65,11 +65,11 @@ def ensure_schema_migrations(conn: sqlite3.Connection) -> None:
     )
 
 
-def _list_migration_files(migrations_dir: Path) -> List[Tuple[int, Path]]:
+def _list_migration_files(migrations_dir: Path) -> list[tuple[int, Path]]:
     if not migrations_dir.exists():
         raise ConfigError(f"Migrations directory not found: {migrations_dir}")
 
-    items: List[Tuple[int, Path]] = []
+    items: list[tuple[int, Path]] = []
     for p in migrations_dir.glob("*.sql"):
         m = _MIGRATION_RE.match(p.name)
         if not m:
@@ -81,13 +81,13 @@ def _list_migration_files(migrations_dir: Path) -> List[Tuple[int, Path]]:
     return items
 
 
-def applied_migrations(conn: sqlite3.Connection) -> Dict[int, str]:
+def applied_migrations(conn: sqlite3.Connection) -> dict[int, str]:
     ensure_schema_migrations(conn)
     rows = conn.execute("SELECT version, name FROM schema_migrations ORDER BY version").fetchall()
     return {int(r["version"]): str(r["name"]) for r in rows}
 
 
-def apply_migrations(conn: sqlite3.Connection, migrations_dir: Path) -> List[str]:
+def apply_migrations(conn: sqlite3.Connection, migrations_dir: Path) -> list[str]:
     """
     Applies any pending migrations in-order.
     Returns list of applied migration filenames.
@@ -96,7 +96,7 @@ def apply_migrations(conn: sqlite3.Connection, migrations_dir: Path) -> List[str
     already = applied_migrations(conn)
     to_apply = _list_migration_files(migrations_dir)
 
-    applied: List[str] = []
+    applied: list[str] = []
     try:
         conn.execute("BEGIN;")
         for ver, path in to_apply:
@@ -117,7 +117,7 @@ def apply_migrations(conn: sqlite3.Connection, migrations_dir: Path) -> List[str
     return applied
 
 
-def migrate(cfg: Dict[str, Any], migrations_dir: Optional[Path] = None) -> Path:
+def migrate(cfg: dict[str, Any], migrations_dir: Path | None = None) -> Path:
     """
     Ensures DB exists and all migrations are applied.
     Returns db_path.
@@ -141,8 +141,8 @@ def insert_run(
     status: str,
     run_dir: str,
     run_json_path: str,
-    run_log_path: Optional[str],
-    global_log_path: Optional[str],
+    run_log_path: str | None,
+    global_log_path: str | None,
 ) -> None:
     """
     Insert a run row. If run_id already exists, update it.

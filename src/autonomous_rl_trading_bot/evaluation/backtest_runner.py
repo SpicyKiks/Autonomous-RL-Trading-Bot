@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 
@@ -29,12 +30,12 @@ log = get_logger("arbt")
 # Small utilities
 # ─────────────────────────────────────────────────────────────
 def _utc_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _new_backtest_run_id(mode: str) -> str:
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    day = datetime.now(timezone.utc).strftime("%Y%m%d")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    day = datetime.now(UTC).strftime("%Y%m%d")
     return f"run_backtest_{mode}_{ts}_{day}"
 
 
@@ -64,7 +65,7 @@ def _dataset_root_for_id(dataset_id: str) -> Path:
     raise FileNotFoundError(f"Dataset root not found for dataset_id={dataset_id}. Checked: {artifacts_dir() / 'datasets' / dataset_id} and {artifacts_dir() / 'runs' / dataset_id}")
 
 
-def _find_dataset_files(root: Path) -> Tuple[Path, Path]:
+def _find_dataset_files(root: Path) -> tuple[Path, Path]:
     """
     Search recursively under <root> for meta.json + dataset.npz.
     Returns (meta_path, npz_path).
@@ -106,13 +107,13 @@ def _find_dataset_files(root: Path) -> Tuple[Path, Path]:
     return best
 
 
-def _load_dataset_from_id(dataset_id: str) -> Tuple[Dict[str, Any], Dict[str, np.ndarray]]:
+def _load_dataset_from_id(dataset_id: str) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     root = _dataset_root_for_id(dataset_id)
     meta_path, npz_path = _find_dataset_files(root)
 
     dataset_meta = json.loads(meta_path.read_text(encoding="utf-8"))
     arrays_npz = np.load(npz_path, allow_pickle=False)
-    arrays: Dict[str, np.ndarray] = {k: arrays_npz[k] for k in arrays_npz.files}
+    arrays: dict[str, np.ndarray] = {k: arrays_npz[k] for k in arrays_npz.files}
 
     dataset_meta = dict(dataset_meta)
     dataset_meta["_dataset_root"] = str(root)
@@ -170,7 +171,7 @@ def _apply_cfg_override(base: BacktestConfig, override: Any) -> BacktestConfig:
 def _try_load_sb3_model(policy_path: Path):
     from stable_baselines3 import A2C, DQN, PPO, SAC, TD3  # type: ignore
 
-    errors: List[str] = []
+    errors: list[str] = []
     for cls in (PPO, A2C, DQN, SAC, TD3):
         try:
             # Use CPU for MLP policies (faster and avoids GPU warning)
@@ -314,12 +315,12 @@ def run_backtest(
     *,
     mode: str,
     dataset_id: str,
-    run_id: Optional[str] = None,
-    policy: Optional[str] = None,
-    strategies_cfg: Optional[Mapping[str, Any]] = None,
-    cfg: Optional[Union[BacktestConfig, Mapping[str, Any]]] = None,
+    run_id: str | None = None,
+    policy: str | None = None,
+    strategies_cfg: Mapping[str, Any] | None = None,
+    cfg: BacktestConfig | Mapping[str, Any] | None = None,
     **_ignored: Any,  # swallow extra kwargs from CLI to prevent future crashes
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     mode = str(mode).lower().strip()
     if mode not in ("spot", "futures"):
         raise ValueError(f"mode must be 'spot' or 'futures', got: {mode}")
@@ -347,7 +348,7 @@ def run_backtest(
         else:
             strategy_name = policy_arg
 
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
         strategy_used: str
 
         p = Path(strategy_name)

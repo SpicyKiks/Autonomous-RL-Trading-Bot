@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -48,10 +49,10 @@ class FuturesState:
 
 
 def _utc_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def load_dataset(dataset_dir: Path, split: Optional[str] = None) -> Tuple[Dict[str, Any], Dict[str, np.ndarray]]:
+def load_dataset(dataset_dir: Path, split: str | None = None) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """
     Load meta.json + dataset.npz from a dataset directory.
 
@@ -216,7 +217,7 @@ def _execute_buy_spot(
     price: float,
     open_time_ms: int,
     cfg: BacktestConfig,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     if state.cash <= 0.0:
         return None
 
@@ -276,7 +277,7 @@ def _execute_sell_spot(
     open_time_ms: int,
     cfg: BacktestConfig,
     close_all: bool,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     if state.qty_base <= 0.0:
         return None
 
@@ -327,7 +328,7 @@ def run_spot_backtest(
     arrays: Mapping[str, np.ndarray],
     strategy: Strategy,
     cfg: BacktestConfig,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], BacktestMetrics, Dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], BacktestMetrics, dict[str, Any]]:
     times = np.asarray(arrays["open_time_ms"], dtype=np.int64)
     close = np.asarray(arrays["close"], dtype=np.float64)
 
@@ -354,8 +355,8 @@ def run_spot_backtest(
         peak_equity=float(cfg.initial_cash),
     )
 
-    equity_rows: List[Dict[str, Any]] = []
-    trade_rows: List[Dict[str, Any]] = []
+    equity_rows: list[dict[str, Any]] = []
+    trade_rows: list[dict[str, Any]] = []
 
     fee_total = 0.0
     slippage_total = 0.0
@@ -365,7 +366,7 @@ def run_spot_backtest(
         price = float(close[t])
 
         action = int(action_of(t, price))
-        trade: Optional[Dict[str, Any]] = None
+        trade: dict[str, Any] | None = None
 
         if action == 1:
             trade = _execute_buy_spot(state=state, price=price, open_time_ms=ot, cfg=cfg)
@@ -458,8 +459,8 @@ def persist_backtest_to_db(
     cfg: BacktestConfig,
     params_json: str,
     metrics: BacktestMetrics,
-    equity_rows: List[Dict[str, Any]],
-    trade_rows: List[Dict[str, Any]],
+    equity_rows: list[dict[str, Any]],
+    trade_rows: list[dict[str, Any]],
     started_utc: str,
     finished_utc: str,
     status: str,
@@ -595,7 +596,7 @@ def _apply_futures_delta(
     open_time_ms: int,
     slippage_cost: float,
     reason: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     if abs(delta_qty) <= 0.0:
         return None
 
@@ -678,7 +679,7 @@ def run_futures_backtest(
     arrays: Mapping[str, np.ndarray],
     strategy: Strategy,
     cfg: BacktestConfig,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], BacktestMetrics, Dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], BacktestMetrics, dict[str, Any]]:
     times = np.asarray(arrays["open_time_ms"], dtype=np.int64)
     close = np.asarray(arrays["close"], dtype=np.float64)
 
@@ -709,8 +710,8 @@ def run_futures_backtest(
         liquidated=False,
     )
 
-    equity_rows: List[Dict[str, Any]] = []
-    trade_rows: List[Dict[str, Any]] = []
+    equity_rows: list[dict[str, Any]] = []
+    trade_rows: list[dict[str, Any]] = []
 
     fee_total = 0.0
     slippage_total = 0.0
@@ -733,7 +734,7 @@ def run_futures_backtest(
         equity = float(state.collateral + unpnl)
 
         action = int(action_of(t, price))
-        trade: Optional[Dict[str, Any]] = None
+        trade: dict[str, Any] | None = None
 
         # Determine desired delta qty
         delta_qty = 0.0
@@ -925,8 +926,8 @@ def persist_futures_backtest_to_db(
     dataset_meta: Mapping[str, Any],
     params_json: str,
     metrics: BacktestMetrics,
-    equity_rows: List[Dict[str, Any]],
-    trade_rows: List[Dict[str, Any]],
+    equity_rows: list[dict[str, Any]],
+    trade_rows: list[dict[str, Any]],
     started_utc: str,
     finished_utc: str,
     status: str,

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from autonomous_rl_trading_bot.common.types import OrderQtyUnit, OrderRequest, Side
 
 
@@ -61,7 +59,7 @@ def order_for_target_fraction(
     qty_unit: OrderQtyUnit,
     leverage: float = 1.0,
     reduce_only: bool = False,
-) -> Optional[OrderRequest]:
+) -> OrderRequest | None:
     """
     Generate an OrderRequest to move from current_qty to target_fraction.
 

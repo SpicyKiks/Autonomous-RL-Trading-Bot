@@ -4,7 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import yaml
 from dotenv import load_dotenv
@@ -16,7 +16,7 @@ from .paths import configs_dir
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     for k, v in override.items():
         if k in out and isinstance(out[k], dict) and isinstance(v, dict):
@@ -41,7 +41,7 @@ def _expand_env_vars(obj: Any) -> Any:
     return obj
 
 
-def _load_yaml(path: Path) -> Dict[str, Any]:
+def _load_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise ConfigError(f"Config file not found: {path}")
     try:
@@ -56,7 +56,7 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 
 @dataclass(frozen=True)
 class LoadedConfig:
-    config: Dict[str, Any]
+    config: dict[str, Any]
     config_hash: str
 
 

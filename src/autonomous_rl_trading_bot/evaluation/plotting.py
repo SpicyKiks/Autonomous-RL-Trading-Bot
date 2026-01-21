@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 
 def plot_equity_and_drawdown(
-    equity: List[float],
-    drawdown: List[float],
-    open_time_ms: List[int],
+    equity: list[float],
+    drawdown: list[float],
+    open_time_ms: list[int],
     output_path: Path,
     title: str = "Equity & Drawdown",
 ) -> None:
@@ -58,9 +57,9 @@ def plot_equity_and_drawdown(
 
 
 def plot_trades_over_price(
-    prices: List[float],
-    open_time_ms: List[int],
-    trades: List[Dict[str, Any]],
+    prices: list[float],
+    open_time_ms: list[int],
+    trades: list[dict[str, Any]],
     output_path: Path,
     title: str = "Trades Over Price",
 ) -> None:
@@ -125,15 +124,15 @@ def plot_trades_over_price(
 
 
 def plot_price_with_trades(
-    prices: List[float],
-    open_time_ms: List[int],
-    trades: List[Dict[str, Any]],
+    prices: list[float],
+    open_time_ms: list[int],
+    trades: list[dict[str, Any]],
     output_path: Path,
     title: str = "Price with Trade Markers",
     use_candlestick: bool = False,
-    open_prices: Optional[List[float]] = None,
-    high_prices: Optional[List[float]] = None,
-    low_prices: Optional[List[float]] = None,
+    open_prices: list[float] | None = None,
+    high_prices: list[float] | None = None,
+    low_prices: list[float] | None = None,
 ) -> None:
     """
     Plot price chart (candlestick or line) with buy/sell markers.

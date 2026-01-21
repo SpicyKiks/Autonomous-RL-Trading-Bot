@@ -28,6 +28,8 @@ dependencies = [
     "reportlab>=4.0",
     "pywebview>=5.0",
     "requests>=2.31",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
 ]
 
 [project.optional-dependencies]
@@ -57,9 +59,36 @@ target-version = ["py311"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "*.egg-info",
+    "build",
+    "dist",
+]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B"]
-ignore = ["E501"]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "B008",  # do not perform function calls in argument defaults
+    "B904",  # allow bare except in specific cases
+    "SIM108", # prefer ternary over if-else-block
+]
+fixable = ["F", "I", "UP", "C4", "SIM"]
+unfixable = ["E", "W", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["autonomous_rl_trading_bot"]
 
 

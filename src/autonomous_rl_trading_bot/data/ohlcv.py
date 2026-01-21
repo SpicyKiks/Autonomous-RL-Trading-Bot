@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Literal, Sequence
+from typing import Literal
 
 import pandas as pd
 
@@ -30,7 +31,7 @@ class OhlcvBar:
         return [float(self.ts_ms), self.open, self.high, self.low, self.close, self.volume]
 
     @staticmethod
-    def from_ccxt_row(row: Sequence[float]) -> "OhlcvBar":
+    def from_ccxt_row(row: Sequence[float]) -> OhlcvBar:
         if len(row) < 6:
             raise ValueError(f"Invalid CCXT OHLCV row length={len(row)} row={row!r}")
         ts_ms = int(row[0])

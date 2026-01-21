@@ -1,9 +1,9 @@
 ﻿from __future__ import annotations
 
 import zipfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Set, Tuple
 
 ZIP_NAME = "code_only.zip"
 
@@ -157,9 +157,9 @@ def _human(n: int) -> str:
         u += 1
     return f"{x:.1f} {units[u]}"
 
-def collect_all(root: Path) -> List[CollectedFile]:
-    out: List[CollectedFile] = []
-    seen: Set[str] = set()
+def collect_all(root: Path) -> list[CollectedFile]:
+    out: list[CollectedFile] = []
+    seen: set[str] = set()
     for d in INCLUDE_DIRS:
         for fi in _iter_dir(root, d):
             k = fi.rel_path.as_posix()

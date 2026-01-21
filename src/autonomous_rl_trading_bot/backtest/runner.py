@@ -2,77 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
 
 from autonomous_rl_trading_bot.backtest.metrics import compute_backtest_metrics
 from autonomous_rl_trading_bot.envs.trading_env import TradingEnv
-from autonomous_rl_trading_bot.training.train_pipeline import load_dataset, split_dataset
-
-
-def _run_baseline_strategy(
-    df: pd.DataFrame,
-    strategy,
-    initial_balance: float,
-    taker_fee: float,
-    slippage_bps: float,
-) -> Dict[str, Any]:
-    """Run a baseline strategy and compute metrics."""
-    # Generate positions
-    positions = strategy.generate_positions(df)
-    
-    # Simulate trading
-    balance = initial_balance
-    position = 0
-    qty = 0.0
-    entry_price = 0.0
-    equity_curve = [initial_balance]
-    trades = []
-    
-    for i in range(len(df)):
-        row = df.iloc[i]
-        price = float(row["close"])
-        target_position = int(positions.iloc[i]) if i < len(positions) else 0
-        
-        # Execute position change
-        if target_position != position:
-            # Close current position
-            if position != 0:
-                execution_price = price * (1.0 - slippage_bps / 10000.0) if position == 1 else price * (1.0 + slippage_bps / 10000.0)
-                notional = execution_price * qty
-                fee = notional * taker_fee
-                pnl = (execution_price - entry_price) * qty if position == 1 else (entry_price - execution_price) * qty
-                pnl -= fee
-                balance += notional - fee
-                trades.append({"pnl": float(pnl)})
-                position = 0
-                qty = 0.0
-            
-            # Open new position
-            if target_position != 0:
-                execution_price = price * (1.0 + slippage_bps / 10000.0) if target_position == 1 else price * (1.0 - slippage_bps / 10000.0)
-                available = balance * 1.0  # Use full balance
-                fee = available * taker_fee
-                cost_after_fee = available - fee
-                qty = cost_after_fee / execution_price
-                balance -= available
-                entry_price = execution_price
-                position = target_position
-        
-        # Update equity
-        if position == 1:
-            equity = balance + (price - entry_price) * qty
-        elif position == -1:
-            equity = balance + (entry_price - price) * qty
-        else:
-            equity = balance
-        equity_curve.append(float(equity))
-    
-    # Compute metrics
-    return compute_backtest_metrics(equity_curve, trades, initial_balance)
+from autonomous_rl_trading_bot.training.train_pipeline import split_dataset
 
 
 def _run_baselines_comparison(
@@ -83,7 +20,7 @@ def _run_baselines_comparison(
     initial_balance: float,
     taker_fee: float,
     slippage_bps: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run baseline strategies and return their metrics.
     
@@ -126,11 +63,11 @@ def _run_baseline_strategy(
     initial_balance: float,
     taker_fee: float,
     slippage_bps: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run a baseline strategy and compute metrics."""
     # Generate positions
     positions = strategy.generate_positions(df)
-    
+
     # Simulate trading
     balance = initial_balance
     position = 0
@@ -138,29 +75,41 @@ def _run_baseline_strategy(
     entry_price = 0.0
     equity_curve = [initial_balance]
     trades = []
-    
+
     for i in range(len(df)):
         row = df.iloc[i]
         price = float(row["close"])
         target_position = int(positions.iloc[i]) if i < len(positions) else 0
-        
+
         # Execute position change
         if target_position != position:
             # Close current position
             if position != 0:
-                execution_price = price * (1.0 - slippage_bps / 10000.0) if position == 1 else price * (1.0 + slippage_bps / 10000.0)
+                execution_price = (
+                    price * (1.0 - slippage_bps / 10000.0)
+                    if position == 1
+                    else price * (1.0 + slippage_bps / 10000.0)
+                )
                 notional = execution_price * qty
                 fee = notional * taker_fee
-                pnl = (execution_price - entry_price) * qty if position == 1 else (entry_price - execution_price) * qty
+                pnl = (
+                    (execution_price - entry_price) * qty
+                    if position == 1
+                    else (entry_price - execution_price) * qty
+                )
                 pnl -= fee
                 balance += notional - fee
                 trades.append({"pnl": float(pnl)})
                 position = 0
                 qty = 0.0
-            
+
             # Open new position
             if target_position != 0:
-                execution_price = price * (1.0 + slippage_bps / 10000.0) if target_position == 1 else price * (1.0 - slippage_bps / 10000.0)
+                execution_price = (
+                    price * (1.0 + slippage_bps / 10000.0)
+                    if target_position == 1
+                    else price * (1.0 - slippage_bps / 10000.0)
+                )
                 available = balance * 1.0  # Use full balance
                 fee = available * taker_fee
                 cost_after_fee = available - fee
@@ -168,7 +117,7 @@ def _run_baseline_strategy(
                 balance -= available
                 entry_price = execution_price
                 position = target_position
-        
+
         # Update equity
         if position == 1:
             equity = balance + (price - entry_price) * qty
@@ -177,12 +126,12 @@ def _run_baseline_strategy(
         else:
             equity = balance
         equity_curve.append(float(equity))
-    
+
     # Compute metrics
     return compute_backtest_metrics(equity_curve, trades, initial_balance)
 
 
-def load_run_config(run_id: str) -> Dict[str, Any]:
+def load_run_config(run_id: str) -> dict[str, Any]:
     """
     Load run configuration from run directory.
     
@@ -201,21 +150,21 @@ def load_run_config(run_id: str) -> Dict[str, Any]:
     run_dir = Path("logs") / "runs" / run_id
     config_path = run_dir / "run_config.json"
     if config_path.exists():
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             return json.load(f)
     
     # Try logs/tensorboard/<run_id>/../run_config.json
     tb_dir = Path("logs") / "tensorboard" / run_id
     config_path = tb_dir.parent / "run_config.json"
     if config_path.exists():
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             return json.load(f)
     
     # Try models directory (for backward compatibility)
     models_dir = Path("models")
     if models_dir.exists():
         for config_file in models_dir.glob("*_config.json"):
-            with open(config_file, "r") as f:
+            with open(config_file) as f:
                 config = json.load(f)
                 # Check if this config matches the run_id pattern
                 if run_id in config_file.stem or config_file.stem.startswith("ppo_trader"):
@@ -228,14 +177,14 @@ def run_backtest(
     *,
     mode: str,
     policy: str = "ppo",
-    model_path: Optional[str] = None,
-    dataset_path: Optional[str] = None,
-    symbol: Optional[str] = None,
-    interval: Optional[str] = None,
-    run_id: Optional[str] = None,
+    model_path: str | None = None,
+    dataset_path: str | None = None,
+    symbol: str | None = None,
+    interval: str | None = None,
+    run_id: str | None = None,
     train_split: float = 0.8,
     output_dir: str = "reports",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run backtest evaluation on test split.
     
@@ -254,7 +203,7 @@ def run_backtest(
         Dictionary with metrics and output paths
     """
     # Load run config if run_id provided
-    config: Dict[str, Any] = {}
+    config: dict[str, Any] = {}
     if run_id:
         try:
             config = load_run_config(run_id)
@@ -349,9 +298,9 @@ def _run_ppo_backtest(
     seed: int,
     train_split: float,
     output_dir: str,
-    symbol: Optional[str],
-    interval: Optional[str],
-) -> Dict[str, Any]:
+    symbol: str | None,
+    interval: str | None,
+) -> dict[str, Any]:
     """Run PPO model backtest (existing implementation)."""
     # Create test environment (use same constraints as training)
     test_env = TradingEnv(
@@ -376,13 +325,13 @@ def _run_ppo_backtest(
     done = False
     
     # Logging structures
-    equity_curve: List[float] = [initial_balance]
-    step_logs: List[Dict[str, Any]] = []
-    trades: List[Dict[str, Any]] = []
+    equity_curve: list[float] = [initial_balance]
+    step_logs: list[dict[str, Any]] = []
+    trades: list[dict[str, Any]] = []
     
     last_position = 0
     last_trade_count = 0
-    current_trade: Optional[Dict[str, Any]] = None
+    current_trade: dict[str, Any] | None = None
     
     while not done:
         # Get current state (before step, so we log the state before action)
@@ -574,11 +523,15 @@ def _run_baseline_backtest(
     seed: int,
     train_split: float,
     output_dir: str,
-    symbol: Optional[str],
-    interval: Optional[str],
-) -> Dict[str, Any]:
+    symbol: str | None,
+    interval: str | None,
+) -> dict[str, Any]:
     """Run baseline strategy backtest."""
-    from autonomous_rl_trading_bot.evaluation.baselines import BuyAndHold, SMACrossover, RSIReversion
+    from autonomous_rl_trading_bot.evaluation.baselines import (
+        BuyAndHold,
+        RSIReversion,
+        SMACrossover,
+    )
     
     # Create baseline strategy
     if policy == "buyhold":
@@ -598,11 +551,11 @@ def _run_baseline_backtest(
     position = 0
     qty = 0.0
     entry_price = 0.0
-    equity_curve: List[float] = [initial_balance]
-    step_logs: List[Dict[str, Any]] = []
-    trades: List[Dict[str, Any]] = []
+    equity_curve: list[float] = [initial_balance]
+    step_logs: list[dict[str, Any]] = []
+    trades: list[dict[str, Any]] = []
     
-    current_trade: Optional[Dict[str, Any]] = None
+    current_trade: dict[str, Any] | None = None
     
     for i in range(len(test_df)):
         row = test_df.iloc[i]
@@ -760,16 +713,13 @@ def _run_baseline_backtest(
 
 
 def _save_backtest_results(
-    metrics: Dict[str, Any],
-    trades: List[Dict[str, Any]],
-    step_logs: List[Dict[str, Any]],
-    equity_curve: List[float],
+    metrics: dict[str, Any],
+    trades: list[dict[str, Any]],
+    step_logs: list[dict[str, Any]],
+    equity_curve: list[float],
     output_dir: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Save backtest results to files."""
-    from pathlib import Path
-    import json
-    import pandas as pd
     
     # Create output directory
     output_path = Path(output_dir)
@@ -809,70 +759,8 @@ def _save_backtest_results(
     trades_df.to_csv(trades_csv_path, index=False)
     
     # Calculate drawdown for each step
-    initial_balance = equity_curve[0] if equity_curve else 10000.0
-    peak_equity = initial_balance
-    drawdown_curve = []
-    for equity_val in equity_curve[1:]:  # Skip initial balance
-        peak_equity = max(peak_equity, equity_val)
-        drawdown = (peak_equity - equity_val) / peak_equity if peak_equity > 0 else 0.0
-        drawdown_curve.append(float(drawdown))
-    
-    equity_df = pd.DataFrame({
-        "timestamp_ms": [log["timestamp_ms"] for log in step_logs],
-        "equity": equity_curve[1:],  # Skip initial balance
-        "drawdown": drawdown_curve,
-    })
-    equity_csv_path = output_path / "equity_curve.csv"
-    equity_df.to_csv(equity_csv_path, index=False)
-    
-    return {
-        "report_json": str(report_json_path),
-        "trades_csv": str(trades_csv_path),
-        "equity_csv": str(equity_csv_path),
-        "metrics": metrics,
-        "num_trades": metrics.get("num_trades", 0),
-    }
-    
-    # Create output directory
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    
-    # Save reports
-    report_json_path = output_path / "backtest_report.json"
-    with open(report_json_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-    
-    # Ensure all trades have required columns
-    if trades:
-        # Normalize trade columns
-        normalized_trades = []
-        for trade in trades:
-            normalized = {
-                "entry_timestamp_ms": trade.get("entry_timestamp_ms", trade.get("entry_timestamp", 0)),
-                "exit_timestamp_ms": trade.get("exit_timestamp_ms", trade.get("exit_timestamp", 0)),
-                "entry_price": float(trade.get("entry_price", 0.0)),
-                "exit_price": float(trade.get("exit_price", 0.0)),
-                "position": int(trade.get("position", 0)),
-                "qty": float(trade.get("qty", 0.0)),
-                "gross_pnl": float(trade.get("gross_pnl", trade.get("pnl", 0.0))),
-                "fee_paid": float(trade.get("fee_paid", 0.0)),
-                "slippage_cost": float(trade.get("slippage_cost", 0.0)),
-                "net_pnl": float(trade.get("net_pnl", trade.get("pnl", 0.0))),
-                "pnl": float(trade.get("net_pnl", trade.get("pnl", 0.0))),  # Legacy alias
-            }
-            normalized_trades.append(normalized)
-        trades_df = pd.DataFrame(normalized_trades)
-    else:
-        trades_df = pd.DataFrame(columns=[
-            "entry_timestamp_ms", "exit_timestamp_ms", "entry_price", "exit_price",
-            "position", "qty", "gross_pnl", "fee_paid", "slippage_cost", "net_pnl", "pnl"
-        ])
-    
-    trades_csv_path = output_path / "trades.csv"
-    trades_df.to_csv(trades_csv_path, index=False)
-    
-    # Calculate drawdown for each step
-    peak_equity = initial_balance
+    initial_balance_val = equity_curve[0] if equity_curve else 10000.0
+    peak_equity = initial_balance_val
     drawdown_curve = []
     for equity_val in equity_curve[1:]:  # Skip initial balance
         peak_equity = max(peak_equity, equity_val)

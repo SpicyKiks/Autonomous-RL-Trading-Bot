@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from autonomous_rl_trading_bot.broker.base_broker import BrokerAdapter
-from autonomous_rl_trading_bot.common.types import AccountSnapshot, Fill, OrderAck, OrderRequest, Position
+from autonomous_rl_trading_bot.common.types import (
+    AccountSnapshot,
+    Fill,
+    OrderAck,
+    OrderRequest,
+    Position,
+)
 from autonomous_rl_trading_bot.data.exchange_client import to_ccxt_symbol
 
 
@@ -27,10 +33,10 @@ class SpotBroker(BrokerAdapter):
         self,
         *,
         exchange_id: str = "binance",
-        api_key: Optional[str] = None,
-        api_secret: Optional[str] = None,
-        demo: Optional[bool] = None,
-        base_url_demo: Optional[str] = None,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+        demo: bool | None = None,
+        base_url_demo: str | None = None,
         allow_network_env: str = "ALLOW_NETWORK",
     ) -> None:
         self.exchange_id = exchange_id
@@ -53,8 +59,9 @@ class SpotBroker(BrokerAdapter):
         if self._exchange is None:
             self._require_network()
             try:
-                import ccxt
                 import logging
+
+                import ccxt
             except ImportError as e:
                 raise RuntimeError("ccxt is required for exchange execution. Install: pip install ccxt") from e
 
@@ -185,13 +192,13 @@ class SpotBroker(BrokerAdapter):
             leverage=0.0,
         )
 
-    def get_open_positions(self, *, symbol: Optional[str] = None) -> list[Position]:
+    def get_open_positions(self, *, symbol: str | None = None) -> list[Position]:
         self._require_network()
         ex = self._get_exchange()
         bal = ex.fetch_balance()
 
-        base_asset: Optional[str] = None
-        ccxt_sym: Optional[str] = None
+        base_asset: str | None = None
+        ccxt_sym: str | None = None
         if symbol:
             ccxt_sym = to_ccxt_symbol(symbol)
             base_asset = ccxt_sym.split("/")[0]
@@ -259,7 +266,7 @@ class SpotBroker(BrokerAdapter):
         self._require_network()
         return False
 
-    def iter_fills(self, *, since_ts_ms: Optional[int] = None) -> Iterable[Fill]:
+    def iter_fills(self, *, since_ts_ms: int | None = None) -> Iterable[Fill]:
         self._require_network()
         ex = self._get_exchange()
 

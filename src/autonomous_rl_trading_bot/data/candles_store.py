@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import csv
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, List
 
 from autonomous_rl_trading_bot.exchange.binance_public import Candle
 
@@ -49,7 +49,7 @@ def insert_candles(conn: sqlite3.Connection, candles: Iterable[Candle]) -> int:
     return len(rows)
 
 
-def write_candles_csv(path: Path, candles: List[Candle]) -> None:
+def write_candles_csv(path: Path, candles: list[Candle]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)

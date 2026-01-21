@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlencode
 
 from autonomous_rl_trading_bot.common.http import get_json
@@ -21,14 +21,14 @@ class Candle:
     close: float
     volume: float
     close_time_ms: int
-    quote_asset_volume: Optional[float]
-    number_of_trades: Optional[int]
-    taker_buy_base_asset_volume: Optional[float]
-    taker_buy_quote_asset_volume: Optional[float]
-    ignore: Optional[float]
+    quote_asset_volume: float | None
+    number_of_trades: int | None
+    taker_buy_base_asset_volume: float | None
+    taker_buy_quote_asset_volume: float | None
+    ignore: float | None
 
 
-def _base_url(cfg: Dict[str, Any], market_type: str) -> str:
+def _base_url(cfg: dict[str, Any], market_type: str) -> str:
     exch = cfg.get("exchange", {}) or {}
     demo = bool(exch.get("demo", True))
     market_type = market_type.strip().lower()
@@ -51,15 +51,15 @@ def _path_for(market_type: str) -> str:
 
 
 def fetch_klines(
-    cfg: Dict[str, Any],
+    cfg: dict[str, Any],
     *,
     market_type: str,
     symbol: str,
     interval: str,
-    start_time_ms: Optional[int] = None,
-    end_time_ms: Optional[int] = None,
+    start_time_ms: int | None = None,
+    end_time_ms: int | None = None,
     limit: int = 1000,
-) -> List[Candle]:
+) -> list[Candle]:
     """
     Fetch a single batch of klines (max 1000).
     Returns parsed Candle objects.
@@ -67,7 +67,7 @@ def fetch_klines(
     base = _base_url(cfg, market_type)
     path = _path_for(market_type)
 
-    params: Dict[str, Any] = {
+    params: dict[str, Any] = {
         "symbol": symbol.upper(),
         "interval": interval,
         "limit": int(limit),
@@ -84,7 +84,7 @@ def fetch_klines(
     if not isinstance(raw, list):
         raise ValueError(f"Unexpected klines payload type: {type(raw)}")
 
-    out: List[Candle] = []
+    out: list[Candle] = []
     for row in raw:
         # Binance kline format: list with 12 items
         # [ openTime, open, high, low, close, volume, closeTime, quoteAssetVolume, numTrades, takerBuyBase, takerBuyQuote, ignore ]

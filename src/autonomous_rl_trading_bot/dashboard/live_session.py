@@ -8,7 +8,6 @@ import traceback
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 from autonomous_rl_trading_bot.common.paths import artifacts_dir
 
@@ -26,12 +25,12 @@ class LiveSession:
     """Singleton live trading session state."""
 
     status: SessionStatus = SessionStatus.IDLE
-    thread: Optional[threading.Thread] = None
-    stop_event: Optional[threading.Event] = None
-    run_id: Optional[str] = None
-    run_dir: Optional[Path] = None
-    last_error: Optional[str] = None
-    last_error_traceback: Optional[str] = None
+    thread: threading.Thread | None = None
+    stop_event: threading.Event | None = None
+    run_id: str | None = None
+    run_dir: Path | None = None
+    last_error: str | None = None
+    last_error_traceback: str | None = None
     log_lines: list[str] = None
     last_start_clicks: int = 0
     last_stop_clicks: int = 0

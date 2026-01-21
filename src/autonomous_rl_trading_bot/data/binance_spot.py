@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 import ccxt
 
 from autonomous_rl_trading_bot.data.exchange_client import CcxtClient, ExchangeFetchSpec
-from autonomous_rl_trading_bot.data.ohlcv import MarketType, OhlcvBar
+from autonomous_rl_trading_bot.data.ohlcv import OhlcvBar
 
 
 def _truthy(name: str) -> bool:
@@ -14,7 +14,7 @@ def _truthy(name: str) -> bool:
     return v in ("1", "true", "yes", "y", "on")
 
 
-def make_binance_spot_ccxt(*, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> Any:
+def make_binance_spot_ccxt(*, api_key: str | None = None, api_secret: str | None = None) -> Any:
     ex = ccxt.binance(
         {
             "enableRateLimit": True,
@@ -30,7 +30,7 @@ def make_binance_spot_ccxt(*, api_key: Optional[str] = None, api_secret: Optiona
 
 
 class BinanceSpotClient(CcxtClient):
-    def __init__(self, *, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> None:
+    def __init__(self, *, api_key: str | None = None, api_secret: str | None = None) -> None:
         super().__init__(
             exchange=make_binance_spot_ccxt(api_key=api_key, api_secret=api_secret),
             exchange_id="binance",

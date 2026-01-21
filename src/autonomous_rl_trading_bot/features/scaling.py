@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 from sklearn.preprocessing import RobustScaler
 
 
-def fit_scaler(train_X: np.ndarray, kind: str = "robust") -> Dict[str, Any]:
+def fit_scaler(train_X: np.ndarray, kind: str = "robust") -> dict[str, Any]:
     """
     Fit a scaler on training data (leakage-safe).
 
@@ -42,7 +42,7 @@ def fit_scaler(train_X: np.ndarray, kind: str = "robust") -> Dict[str, Any]:
     }
 
 
-def transform(X: np.ndarray, scaler_params: Dict[str, Any]) -> np.ndarray:
+def transform(X: np.ndarray, scaler_params: dict[str, Any]) -> np.ndarray:
     """
     Transform features using fitted scaler parameters.
 
@@ -75,14 +75,14 @@ def transform(X: np.ndarray, scaler_params: Dict[str, Any]) -> np.ndarray:
     return X.astype(np.float32)
 
 
-def save_scaler_json(path: Path, scaler_params: Dict[str, Any]) -> None:
+def save_scaler_json(path: Path, scaler_params: dict[str, Any]) -> None:
     """Save scaler parameters to JSON file."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(scaler_params, indent=2), encoding="utf-8")
 
 
-def load_scaler_json(path: Path) -> Dict[str, Any]:
+def load_scaler_json(path: Path) -> dict[str, Any]:
     """Load scaler parameters from JSON file."""
     path = Path(path)
     return json.loads(path.read_text(encoding="utf-8"))

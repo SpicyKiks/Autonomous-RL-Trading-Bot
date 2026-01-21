@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-import pytest
 from pathlib import Path
+
+import pytest
 
 from autonomous_rl_trading_bot.repro.runner import run_repro
 
@@ -43,7 +44,7 @@ def test_repro_smoke():
         assert file_path.exists(), f"Required file not found: {file_path}"
     
     # Verify run_config.json structure
-    with open(run_dir / "run_config.json", "r") as f:
+    with open(run_dir / "run_config.json") as f:
         config = json.load(f)
     
     assert "run_id" in config
@@ -52,7 +53,7 @@ def test_repro_smoke():
     assert config["seed"] == 42
     
     # Verify comparison.json structure
-    with open(run_dir / "comparison.json", "r") as f:
+    with open(run_dir / "comparison.json") as f:
         comparison = json.load(f)
     
     assert "ppo" in comparison
@@ -61,7 +62,7 @@ def test_repro_smoke():
     assert comparison["winner"] in ["ppo", "sma"]
     
     # Verify PPO backtest report
-    with open(run_dir / "ppo" / "backtest_report.json", "r") as f:
+    with open(run_dir / "ppo" / "backtest_report.json") as f:
         ppo_report = json.load(f)
     
     assert "total_return" in ppo_report
@@ -69,7 +70,7 @@ def test_repro_smoke():
     assert ppo_report.get("policy") == "ppo"
     
     # Verify SMA backtest report
-    with open(run_dir / "sma" / "backtest_report.json", "r") as f:
+    with open(run_dir / "sma" / "backtest_report.json") as f:
         sma_report = json.load(f)
     
     assert "total_return" in sma_report

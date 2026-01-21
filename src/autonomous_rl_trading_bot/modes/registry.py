@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from autonomous_rl_trading_bot.common.exceptions import ConfigError
 from autonomous_rl_trading_bot.modes.mode_defs import ModeDefinition, builtin_modes
@@ -14,7 +15,7 @@ class ModeRegistry:
     """
 
     def __init__(self) -> None:
-        self._modes: Dict[str, ModeDefinition] = {}
+        self._modes: dict[str, ModeDefinition] = {}
 
     def register(self, mode: ModeDefinition) -> None:
         mid = (mode.mode_id or "").strip().lower()

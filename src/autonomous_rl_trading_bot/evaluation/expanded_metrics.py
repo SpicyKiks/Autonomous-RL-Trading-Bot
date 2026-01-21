@@ -2,25 +2,25 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
 class ExpandedMetrics:
     """Expanded metrics for baseline comparison."""
-    sharpe: Optional[float]
-    sortino: Optional[float]
-    calmar: Optional[float]
+    sharpe: float | None
+    sortino: float | None
+    calmar: float | None
     max_drawdown: float
-    win_rate: Optional[float]
-    profit_factor: Optional[float]
-    avg_trade: Optional[float]
+    win_rate: float | None
+    profit_factor: float | None
+    avg_trade: float | None
     exposure_avg: float
     turnover: float
     total_return: float
     trade_count: int
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "sharpe": self.sharpe,
             "sortino": self.sortino,
@@ -53,10 +53,10 @@ def _annualization_factor(interval_ms: int) -> float:
 
 def compute_expanded_metrics(
     *,
-    equity: List[float],
-    drawdown: List[float],
-    exposure: List[float],
-    trades: List[Dict[str, Any]],
+    equity: list[float],
+    drawdown: list[float],
+    exposure: list[float],
+    trades: list[dict[str, Any]],
     interval_ms: int,
 ) -> ExpandedMetrics:
     """
@@ -81,10 +81,10 @@ def compute_expanded_metrics(
     max_dd = float(max(drawdown)) if drawdown else 0.0
     
     # Compute Sharpe and Sortino from equity log-returns
-    sharpe: Optional[float] = None
-    sortino: Optional[float] = None
+    sharpe: float | None = None
+    sortino: float | None = None
     if len(equity) >= 3:
-        lr: List[float] = []
+        lr: list[float] = []
         for i in range(1, len(equity)):
             e0 = float(equity[i - 1])
             e1 = float(equity[i])
@@ -114,7 +114,7 @@ def compute_expanded_metrics(
                 sortino = (mean_lr / std_downside) * ann_factor
     
     # Calmar ratio = CAGR / max_drawdown
-    calmar: Optional[float] = None
+    calmar: float | None = None
     if max_dd > 0.0 and len(equity) >= 2:
         # Approximate CAGR from total return and time
         # For simplicity, assume we can estimate from equity curve length
@@ -126,13 +126,13 @@ def compute_expanded_metrics(
             calmar = _safe_div(cagr_approx, max_dd)
     
     # Win rate and profit factor from trades
-    win_rate: Optional[float] = None
-    profit_factor: Optional[float] = None
-    avg_trade: Optional[float] = None
+    win_rate: float | None = None
+    profit_factor: float | None = None
+    avg_trade: float | None = None
     
     if trades:
         # Extract trade PnL
-        trade_pnls: List[float] = []
+        trade_pnls: list[float] = []
         prev_equity = initial_cash
         
         for trade in trades:

@@ -4,9 +4,10 @@ import json
 import math
 import pickle
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 import numpy as np
 from sklearn.preprocessing import RobustScaler
@@ -21,12 +22,12 @@ class QualityReport:
     unique_open_times: int
     duplicates: int
     gaps: int
-    first_open_time_ms: Optional[int]
-    last_open_time_ms: Optional[int]
-    first_gap_after_ms: Optional[int]
+    first_open_time_ms: int | None
+    last_open_time_ms: int | None
+    first_gap_after_ms: int | None
     max_gap_ms: int
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "interval_ms": self.interval_ms,
             "total_rows": self.total_rows,
@@ -47,7 +48,7 @@ class DatasetResult:
     report: QualityReport
     window_points: int
     candles_used: int
-    features: List[str]
+    features: list[str]
     npz_path: Path
     csv_path: Path
     meta_path: Path
@@ -59,15 +60,15 @@ def _query_candles(
     market_type: str,
     symbol: str,
     interval: str,
-    start_ms: Optional[int] = None,
-    end_ms: Optional[int] = None,
-    limit: Optional[int] = None,
-) -> List[Tuple[int, float, float, float, float, float]]:
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    limit: int | None = None,
+) -> list[tuple[int, float, float, float, float, float]]:
     """
     Returns rows as: (open_time_ms, open, high, low, close, volume) ordered ASC by open_time_ms.
     """
     where = ["market_type = ?", "symbol = ?", "interval = ?"]
-    params: List[Any] = [market_type, symbol.upper(), interval]
+    params: list[Any] = [market_type, symbol.upper(), interval]
 
     if start_ms is not None:
         where.append("open_time_ms >= ?")
@@ -87,7 +88,7 @@ def _query_candles(
         params.append(int(limit))
 
     rows = conn.execute(sql, params).fetchall()
-    out: List[Tuple[int, float, float, float, float, float]] = []
+    out: list[tuple[int, float, float, float, float, float]] = []
     for r in rows:
         # sqlite Row or tuple
         ot = int(r[0])
@@ -138,10 +139,10 @@ def validate_candles(open_times: Sequence[int], interval_ms: int) -> QualityRepo
 
 
 def _latest_contiguous_segment(
-    rows: List[Tuple[int, float, float, float, float, float]],
+    rows: list[tuple[int, float, float, float, float, float]],
     interval_ms: int,
     required_points: int,
-) -> List[Tuple[int, float, float, float, float, float]]:
+) -> list[tuple[int, float, float, float, float, float]]:
     """
     Finds the latest contiguous segment with >= required_points candles and returns
     the last required_points from that segment.
@@ -154,14 +155,14 @@ def _latest_contiguous_segment(
         return []
 
     # Dedup by open_time_ms (keep last occurrence)
-    dedup: Dict[int, Tuple[int, float, float, float, float, float]] = {}
+    dedup: dict[int, tuple[int, float, float, float, float, float]] = {}
     for row in rows:
         dedup[int(row[0])] = row
     times_sorted = sorted(dedup.keys())
 
     # Walk from end backwards building segments
-    segment: List[Tuple[int, float, float, float, float, float]] = []
-    prev_t: Optional[int] = None
+    segment: list[tuple[int, float, float, float, float, float]] = []
+    prev_t: int | None = None
 
     for t in reversed(times_sorted):
         if prev_t is None:
@@ -185,9 +186,9 @@ def _latest_contiguous_segment(
 
 
 def compute_features(
-    segment: List[Tuple[int, float, float, float, float, float]],
-    features: List[str],
-) -> Dict[str, np.ndarray]:
+    segment: list[tuple[int, float, float, float, float, float]],
+    features: list[str],
+) -> dict[str, np.ndarray]:
     """
     Produces arrays aligned to time index.
     Base arrays are length T.
@@ -203,7 +204,7 @@ def compute_features(
     c = np.array([r[4] for r in segment], dtype=np.float64)
     v = np.array([r[5] for r in segment], dtype=np.float64)
 
-    out: Dict[str, np.ndarray] = {
+    out: dict[str, np.ndarray] = {
         "open_time_ms": times,
         "open": o,
         "high": h,
@@ -245,7 +246,7 @@ def compute_features(
     return out
 
 
-def _compute_splits(n: int, train_frac: float, val_frac: float, test_frac: float) -> Dict[str, Dict[str, int]]:
+def _compute_splits(n: int, train_frac: float, val_frac: float, test_frac: float) -> dict[str, dict[str, int]]:
     """
     Compute chronological split boundaries (inclusive start, exclusive end).
     Returns dict with 'train', 'val', 'test' each containing 'start_idx' and 'end_idx'.
@@ -265,7 +266,7 @@ def _compute_splits(n: int, train_frac: float, val_frac: float, test_frac: float
     }
 
 
-def _build_feature_list(features: List[str], arrays: Dict[str, np.ndarray]) -> List[str]:
+def _build_feature_list(features: list[str], arrays: dict[str, np.ndarray]) -> list[str]:
     """
     Build ordered feature list for scaling/observation.
     Includes: log_return, return, close_norm, vol_norm (if available).
@@ -296,11 +297,11 @@ def _build_feature_list(features: List[str], arrays: Dict[str, np.ndarray]) -> L
 
 
 def _prepare_scaled_features(
-    arrays: Dict[str, np.ndarray],
-    feature_list: List[str],
-    splits: Dict[str, Dict[str, int]],
+    arrays: dict[str, np.ndarray],
+    feature_list: list[str],
+    splits: dict[str, dict[str, int]],
     scaler_type: str = "robust",
-) -> Tuple[Dict[str, np.ndarray], RobustScaler]:
+) -> tuple[dict[str, np.ndarray], RobustScaler]:
     """
     Prepare scaled features. Fit scaler on train split only, apply to all splits.
     Returns (arrays_with_scaled_features, fitted_scaler).
@@ -352,12 +353,12 @@ def _prepare_scaled_features(
 def write_dataset_files(
     out_dir: Path,
     dataset_id: str,
-    arrays: Dict[str, np.ndarray],
+    arrays: dict[str, np.ndarray],
     report: QualityReport,
-    meta_extra: Optional[Dict[str, Any]] = None,
-    scaler: Optional[RobustScaler] = None,
-    scaler_path: Optional[Path] = None,
-) -> Tuple[Path, Path, Path]:
+    meta_extra: dict[str, Any] | None = None,
+    scaler: RobustScaler | None = None,
+    scaler_path: Path | None = None,
+) -> tuple[Path, Path, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Save scaler if provided
@@ -422,10 +423,10 @@ def build_dataset_from_db(
     interval: str,
     window_minutes: int,
     strict_gaps: bool,
-    features: List[str],
+    features: list[str],
     out_base_dir: Path,
     dataset_id: str,
-    end_ms: Optional[int] = None,
+    end_ms: int | None = None,
     train_frac: float = 0.75,
     val_frac: float = 0.10,
     test_frac: float = 0.15,

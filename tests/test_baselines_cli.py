@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
-import pytest
 import subprocess
 import sys
+
+import pytest
 
 
 def test_baselines_cli_symbol_interval():
@@ -52,7 +53,6 @@ def test_baselines_cli_help():
     )
     
     # The CLI wrapper may not show help, so test by importing and checking parser
-    from autonomous_rl_trading_bot.evaluation.baselines import main
     import argparse
     
     # Create a test parser to verify args exist

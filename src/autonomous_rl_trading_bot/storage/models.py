@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -14,10 +13,10 @@ class RunModel:
     created_utc: str
     config_hash: str
     seed: int
-    run_dir: Optional[str] = None
-    run_json_path: Optional[str] = None
-    run_log_path: Optional[str] = None
-    global_log_path: Optional[str] = None
+    run_dir: str | None = None
+    run_json_path: str | None = None
+    run_log_path: str | None = None
+    global_log_path: str | None = None
 
 
 @dataclass
@@ -31,7 +30,7 @@ class BacktestModel:
     symbol: str
     interval: str
     started_utc: str
-    finished_utc: Optional[str]
+    finished_utc: str | None
     status: str
     initial_cash: float
     final_equity: float
@@ -54,7 +53,7 @@ class TrainJobModel:
     total_timesteps: int
     seed: int
     started_utc: str
-    finished_utc: Optional[str]
+    finished_utc: str | None
     status: str
-    model_path: Optional[str] = None
+    model_path: str | None = None
 

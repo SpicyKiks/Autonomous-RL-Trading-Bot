@@ -7,14 +7,14 @@ from unittest.mock import patch
 import numpy as np
 
 from autonomous_rl_trading_bot.common.reproducibility import set_global_seed
-from autonomous_rl_trading_bot.evaluation.baselines import make_strategy
+from autonomous_rl_trading_bot.evaluation.backtest_runner import run_backtest
 from autonomous_rl_trading_bot.evaluation.backtester import (
     BacktestConfig,
     load_dataset,
     run_futures_backtest,
     run_spot_backtest,
 )
-from autonomous_rl_trading_bot.evaluation.backtest_runner import run_backtest
+from autonomous_rl_trading_bot.evaluation.baselines import make_strategy
 
 
 def _write_synth_dataset(

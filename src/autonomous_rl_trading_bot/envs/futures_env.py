@@ -3,12 +3,17 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import gymnasium as gym
 import numpy as np
 
-from autonomous_rl_trading_bot.envs.base_env import TradingEnvBase, calc_drawdown, flatten_obs, window_view
+from autonomous_rl_trading_bot.envs.base_env import (
+    TradingEnvBase,
+    calc_drawdown,
+    flatten_obs,
+    window_view,
+)
 from autonomous_rl_trading_bot.envs.fees_slippage import apply_slippage, taker_fee
 from autonomous_rl_trading_bot.envs.rewards import log_equity_return
 
@@ -80,7 +85,7 @@ class FuturesPortfolio:
         return float(self.position_notional(price) * max(0.0, float(mmr)))
 
 
-def _load_npz(npz_path: Path) -> Dict[str, np.ndarray]:
+def _load_npz(npz_path: Path) -> dict[str, np.ndarray]:
     arrays = dict(np.load(npz_path, allow_pickle=False))
     if "close" not in arrays:
         raise ValueError(f"dataset.npz missing required key 'close': {npz_path}")
@@ -99,7 +104,7 @@ class FuturesEnv(TradingEnvBase):
         *,
         close: np.ndarray,
         features: np.ndarray,
-        open_time_ms: Optional[np.ndarray] = None,
+        open_time_ms: np.ndarray | None = None,
         cfg: FuturesEnvConfig = FuturesEnvConfig(),
         seed: int = 0,
     ) -> None:
@@ -144,8 +149,8 @@ class FuturesEnv(TradingEnvBase):
         *,
         cfg: FuturesEnvConfig = FuturesEnvConfig(),
         seed: int = 0,
-        feature_keys: Optional[List[str]] = None,
-    ) -> "FuturesEnv":
+        feature_keys: list[str] | None = None,
+    ) -> FuturesEnv:
         dataset_dir = Path(dataset_dir)
         meta_path = dataset_dir / "meta.json"
         npz_path = dataset_dir / "dataset.npz"
@@ -170,7 +175,7 @@ class FuturesEnv(TradingEnvBase):
         if not feature_keys:
             feature_keys = ["log_return"] if "log_return" in arrays else []
 
-        feats: List[np.ndarray] = []
+        feats: list[np.ndarray] = []
         for k in feature_keys:
             if k not in arrays:
                 continue
@@ -195,7 +200,7 @@ class FuturesEnv(TradingEnvBase):
             seed=seed,
         )
 
-    def reset(self, *, seed: Optional[int] = None, options=None):  # type: ignore[override]
+    def reset(self, *, seed: int | None = None, options=None):  # type: ignore[override]
         super().reset(seed=seed, options=options)
 
         self._i = int(self.cfg.lookback - 1)
@@ -218,7 +223,7 @@ class FuturesEnv(TradingEnvBase):
         equity_prev = self._p.equity(price)
 
         executed = False
-        trade: Optional[Dict[str, Any]] = None
+        trade: dict[str, Any] | None = None
 
         if action == self.LONG:
             executed, trade = self._action_open(direction=+1, price=price)
@@ -293,7 +298,7 @@ class FuturesEnv(TradingEnvBase):
 
     # ---------------- actions ----------------
 
-    def _action_open(self, *, direction: int, price: float) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    def _action_open(self, *, direction: int, price: float) -> tuple[bool, dict[str, Any] | None]:
         direction = 1 if direction >= 0 else -1
         qty0 = float(self._p.qty)
 
@@ -319,7 +324,7 @@ class FuturesEnv(TradingEnvBase):
 
         return self._move_position_towards(target_qty=target_qty, price=price)
 
-    def _action_reduce(self, *, price: float) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    def _action_reduce(self, *, price: float) -> tuple[bool, dict[str, Any] | None]:
         qty0 = float(self._p.qty)
         if abs(qty0) <= 1e-18:
             return False, None
@@ -340,13 +345,13 @@ class FuturesEnv(TradingEnvBase):
 
         return self._move_position_towards(target_qty=target_qty, price=price)
 
-    def _action_close(self, *, price: float) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    def _action_close(self, *, price: float) -> tuple[bool, dict[str, Any] | None]:
         qty0 = float(self._p.qty)
         if abs(qty0) <= 1e-18:
             return False, None
         return self._move_position_towards(target_qty=0.0, price=price)
 
-    def _move_position_towards(self, *, target_qty: float, price: float) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    def _move_position_towards(self, *, target_qty: float, price: float) -> tuple[bool, dict[str, Any] | None]:
         qty0 = float(self._p.qty)
         target_qty = float(target_qty)
 
@@ -461,12 +466,12 @@ class FuturesEnv(TradingEnvBase):
     def _info_dict(
         self,
         *,
-        action: Optional[int],
-        trade: Optional[Dict[str, Any]],
+        action: int | None,
+        trade: dict[str, Any] | None,
         liquidated: bool,
         killed: bool,
         reason: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         price = float(self.close[self._i])
         ts = None
         if self.open_time_ms is not None:
@@ -476,7 +481,7 @@ class FuturesEnv(TradingEnvBase):
         used = self._p.used_margin(price, float(self.cfg.leverage))
         mm = self._p.maintenance_margin(price, float(self.cfg.maintenance_margin_rate))
 
-        info: Dict[str, Any] = {
+        info: dict[str, Any] = {
             "i": int(self._i),
             "ts_ms": ts,
             "price": float(price),

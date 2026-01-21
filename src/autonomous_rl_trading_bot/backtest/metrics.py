@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 
 
 def compute_backtest_metrics(
-    equity_curve: List[float],
-    trades: List[Dict[str, Any]],
+    equity_curve: list[float],
+    trades: list[dict[str, Any]],
     initial_equity: float,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Compute comprehensive backtest metrics from equity curve and trades.
     

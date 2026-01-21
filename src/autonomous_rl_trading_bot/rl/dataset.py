@@ -5,12 +5,11 @@ import os
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import RobustScaler
-
 
 # =========================
 # Existing NPZ dataset loader (kept)
@@ -21,17 +20,17 @@ class LoadedDataset:
     dataset_id: str
     dataset_dir: Path
     npz_path: Path
-    meta: Dict[str, Any]
-    data: Dict[str, np.ndarray]
-    scaler: Optional[RobustScaler] = None
-    feature_list: Optional[list[str]] = None
+    meta: dict[str, Any]
+    data: dict[str, np.ndarray]
+    scaler: RobustScaler | None = None
+    feature_list: list[str] | None = None
 
 
-def _read_json(p: Path) -> Dict[str, Any]:
+def _read_json(p: Path) -> dict[str, Any]:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def load_dataset_npz(dataset_dir: Path, split: Optional[str] = None) -> LoadedDataset:
+def load_dataset_npz(dataset_dir: Path, split: str | None = None) -> LoadedDataset:
     """
     Load dataset from directory. Optionally filter by split.
 
@@ -60,7 +59,7 @@ def load_dataset_npz(dataset_dir: Path, split: Optional[str] = None) -> LoadedDa
     data = {k: npz[k] for k in npz.files}
 
     # Load scaler if available
-    scaler: Optional[RobustScaler] = None
+    scaler: RobustScaler | None = None
     scaler_path_str = meta.get("scaler_path")
     if scaler_path_str:
         scaler_path = dataset_dir / scaler_path_str
@@ -108,7 +107,7 @@ def select_latest_dataset(artifacts_datasets_dir: Path, market_type: str) -> Loa
     if not artifacts_datasets_dir.exists():
         raise FileNotFoundError(f"datasets dir not found: {artifacts_datasets_dir}")
 
-    candidates: list[Tuple[float, Path]] = []
+    candidates: list[tuple[float, Path]] = []
 
     for p in artifacts_datasets_dir.iterdir():
         if not p.is_dir():
@@ -153,11 +152,11 @@ class Dataset:
     dataset_id: str
     market_type: str
     df: pd.DataFrame
-    meta: Dict[str, Any]
-    data: Dict[str, np.ndarray]
-    scaler: Optional[RobustScaler] = None
-    feature_list: Optional[list[str]] = None
-    dataset_dir: Optional[Path] = None
+    meta: dict[str, Any]
+    data: dict[str, np.ndarray]
+    scaler: RobustScaler | None = None
+    feature_list: list[str] | None = None
+    dataset_dir: Path | None = None
 
     @staticmethod
     def _project_root() -> Path:
@@ -190,7 +189,7 @@ class Dataset:
 
 
     @classmethod
-    def _find_dataset_dir(cls, dataset_id: str) -> Optional[Path]:
+    def _find_dataset_dir(cls, dataset_id: str) -> Path | None:
         """
         Find dataset directory by exact dataset_id under known bases.
         """
@@ -213,7 +212,7 @@ class Dataset:
     def _to_df(ld: LoadedDataset) -> pd.DataFrame:
         # Prefer feature_list if present
         if ld.feature_list:
-            cols: Dict[str, np.ndarray] = {}
+            cols: dict[str, np.ndarray] = {}
             for name in ld.feature_list:
                 if name in ld.data:
                     cols[name] = ld.data[name]
@@ -222,7 +221,7 @@ class Dataset:
 
         # Fallback: all 1D arrays with same length
         lengths: list[int] = []
-        cols2: Dict[str, np.ndarray] = {}
+        cols2: dict[str, np.ndarray] = {}
         for k, v in ld.data.items():
             if isinstance(v, np.ndarray) and v.ndim == 1:
                 cols2[k] = v
@@ -237,8 +236,8 @@ class Dataset:
         cls,
         dataset_id: str,
         market_type: str = "spot",
-        split: Optional[str] = None,
-    ) -> "Dataset":
+        split: str | None = None,
+    ) -> Dataset:
         ds_dir = cls._find_dataset_dir(dataset_id)
         if ds_dir is None:
             root = cls._project_root()
@@ -273,7 +272,7 @@ class Dataset:
         )
 
     @classmethod
-    def latest(cls, market_type: str = "spot") -> "Dataset":
+    def latest(cls, market_type: str = "spot") -> Dataset:
         root = cls._project_root()
         ld = select_latest_dataset(root / "artifacts" / "datasets", market_type=market_type)
         df = cls._to_df(ld)
@@ -288,7 +287,7 @@ class Dataset:
             dataset_dir=ld.dataset_dir,
         )
 
-    def split_time(self, train_frac: float = 0.8) -> Tuple["Dataset", "Dataset"]:
+    def split_time(self, train_frac: float = 0.8) -> tuple[Dataset, Dataset]:
         n = len(self.df)
         if n == 0:
             raise ValueError("Dataset.df is empty; cannot split_time().")
@@ -298,13 +297,13 @@ class Dataset:
         left_df = self.df.iloc[:cut].copy()
         right_df = self.df.iloc[cut:].copy()
 
-        def split_arr(a: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        def split_arr(a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             if isinstance(a, np.ndarray) and a.ndim >= 1 and len(a) == n:
                 return a[:cut], a[cut:]
             return a, a
 
-        left_data: Dict[str, np.ndarray] = {}
-        right_data: Dict[str, np.ndarray] = {}
+        left_data: dict[str, np.ndarray] = {}
+        right_data: dict[str, np.ndarray] = {}
         for k, v in self.data.items():
             l, r = split_arr(v)
             left_data[k] = l
@@ -346,7 +345,7 @@ class Dataset:
         preferred = ["timestamp", "time", "datetime", "date", "open", "high", "low", "close", "volume"]
 
         # Collect all 1D arrays
-        one_d: Dict[str, np.ndarray] = {}
+        one_d: dict[str, np.ndarray] = {}
         lengths = set()
 
         for k, v in ld.data.items():
@@ -367,7 +366,7 @@ class Dataset:
                 return pd.DataFrame()
 
         # Start with preferred columns (if present)
-        cols: Dict[str, np.ndarray] = {}
+        cols: dict[str, np.ndarray] = {}
         for name in preferred:
             if name in one_d:
                 cols[name] = one_d.pop(name)

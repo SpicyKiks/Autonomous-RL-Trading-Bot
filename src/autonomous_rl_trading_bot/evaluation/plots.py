@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Union
+from typing import Any
 
 import matplotlib
 
@@ -14,7 +15,7 @@ import pandas as pd
 
 
 def _extract_equity_data(
-    equity_data: Union[List[Dict[str, Any]], pd.DataFrame]
+    equity_data: list[dict[str, Any]] | pd.DataFrame
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Extract equity values and timestamps from various input formats.
@@ -80,7 +81,7 @@ def _compute_drawdown(equity: np.ndarray) -> np.ndarray:
 
 
 def plot_equity_curve(
-    equity_data: Union[List[Dict[str, Any]], pd.DataFrame],
+    equity_data: list[dict[str, Any]] | pd.DataFrame,
     out_path: Path,
     *,
     title: str = "Equity Curve",
@@ -103,7 +104,7 @@ def plot_equity_curve(
 
 
 def plot_drawdown(
-    equity_data: Union[List[Dict[str, Any]], pd.DataFrame],
+    equity_data: list[dict[str, Any]] | pd.DataFrame,
     out_path: Path,
     *,
     title: str = "Drawdown",
@@ -127,7 +128,7 @@ def plot_drawdown(
 
 
 def plot_trades_pnl_histogram(
-    trades: Union[List[Dict[str, Any]], pd.DataFrame],
+    trades: list[dict[str, Any]] | pd.DataFrame,
     out_path: Path,
     *,
     title: str = "Trade PnL Histogram",
